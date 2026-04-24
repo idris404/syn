@@ -1,0 +1,86 @@
+import uuid
+from functools import lru_cache
+
+from loguru import logger
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
+
+from app.config import settings
+
+
+@lru_cache(maxsize=1)
+def get_qdrant_client() -> AsyncQdrantClient:
+    return AsyncQdrantClient(url=settings.qdrant_url)
+
+
+async def ensure_collections() -> None:
+    client = get_qdrant_client()
+    for collection_name in (settings.qdrant_trials_collection, settings.qdrant_papers_collection):
+        exists = await client.collection_exists(collection_name)
+        if not exists:
+            await client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=settings.embedding_dim, distance=Distance.COSINE),
+            )
+            logger.info(f"Created Qdrant collection: {collection_name}")
+        else:
+            logger.info(f"Qdrant collection already exists: {collection_name}")
+
+
+async def upsert_trial(
+    qdrant_id: uuid.UUID,
+    vector: list[float],
+    nct_id: str,
+    title: str | None,
+    status: str | None,
+    phase: str | None,
+    sponsor: str | None,
+) -> None:
+    client = get_qdrant_client()
+    point = PointStruct(
+        id=str(qdrant_id),
+        vector=vector,
+        payload={
+            "nct_id": nct_id,
+            "title": title,
+            "status": status,
+            "phase": phase,
+            "sponsor": sponsor,
+        },
+    )
+    await client.upsert(collection_name=settings.qdrant_trials_collection, points=[point])
+
+
+async def search_trials(vector: list[float], limit: int = 20) -> list[tuple[str, float]]:
+    client = get_qdrant_client()
+    results = await client.search(
+        collection_name=settings.qdrant_trials_collection,
+        query_vector=vector,
+        limit=limit,
+        with_payload=True,
+    )
+    return [(hit.payload["nct_id"], hit.score) for hit in results]
+
+
+async def upsert_paper(
+    pmid: str,
+    vector: list[float],
+    title: str | None,
+    journal: str | None,
+    year: str | None,
+    mesh_terms: list[str] | None,
+) -> None:
+    client = get_qdrant_client()
+    paper_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"pmid:{pmid}"))
+    point = PointStruct(
+        id=paper_id,
+        vector=vector,
+        payload={
+            "pmid": pmid,
+            "title": title,
+            "journal": journal,
+            "year": year,
+            "mesh_terms": mesh_terms or [],
+        },
+    )
+    await client.upsert(collection_name=settings.qdrant_papers_collection, points=[point])
