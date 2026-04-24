@@ -19,10 +19,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SYN", description="Autonomous pharma/biotech R&D monitoring agent", lifespan=lifespan)
 
-from app.api import ingest, trials  # noqa: E402 — after app creation to avoid circular imports
+from app.api import ingest, papers, rag, trials  # noqa: E402 — after app creation to avoid circular imports
 
 app.include_router(trials.router)
 app.include_router(ingest.router)
+app.include_router(papers.router)
+app.include_router(rag.router)
 
 
 @app.get("/health")

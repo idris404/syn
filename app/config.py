@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
     environment: str = "development"
+    groq_api_key: str = ""
+    qdrant_ema_collection: str = "syn_ema"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

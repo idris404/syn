@@ -3,7 +3,7 @@ from functools import lru_cache
 
 from loguru import logger
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 from app.config import settings
 
@@ -15,7 +15,12 @@ def get_qdrant_client() -> AsyncQdrantClient:
 
 async def ensure_collections() -> None:
     client = get_qdrant_client()
-    for collection_name in (settings.qdrant_trials_collection, settings.qdrant_papers_collection):
+    collections = (
+        settings.qdrant_trials_collection,
+        settings.qdrant_papers_collection,
+        settings.qdrant_ema_collection,
+    )
+    for collection_name in collections:
         exists = await client.collection_exists(collection_name)
         if not exists:
             await client.create_collection(
@@ -63,24 +68,59 @@ async def search_trials(vector: list[float], limit: int = 20) -> list[tuple[str,
 
 
 async def upsert_paper(
-    pmid: str,
+    paper_id: str,
     vector: list[float],
-    title: str | None,
-    journal: str | None,
-    year: str | None,
-    mesh_terms: list[str] | None,
+    payload: dict,
+    collection: str | None = None,
 ) -> None:
     client = get_qdrant_client()
-    paper_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"pmid:{pmid}"))
-    point = PointStruct(
-        id=paper_id,
-        vector=vector,
-        payload={
-            "pmid": pmid,
-            "title": title,
-            "journal": journal,
-            "year": year,
-            "mesh_terms": mesh_terms or [],
-        },
+    col = collection or settings.qdrant_papers_collection
+    point = PointStruct(id=paper_id, vector=vector, payload=payload)
+    await client.upsert(collection_name=col, points=[point])
+
+
+async def search_papers(
+    vector: list[float],
+    limit: int = 20,
+    source_filter: str | None = None,
+    collection: str | None = None,
+) -> list[dict]:
+    client = get_qdrant_client()
+    col = collection or settings.qdrant_papers_collection
+
+    query_filter = None
+    if source_filter:
+        query_filter = Filter(
+            must=[FieldCondition(key="source", match=MatchValue(value=source_filter))]
+        )
+
+    results = await client.search(
+        collection_name=col,
+        query_vector=vector,
+        limit=limit,
+        with_payload=True,
+        query_filter=query_filter,
     )
-    await client.upsert(collection_name=settings.qdrant_papers_collection, points=[point])
+    hits = []
+    for hit in results:
+        hits.append({"score": hit.score, **hit.payload})
+    return hits
+
+
+async def search_papers_by_payload(
+    key: str,
+    value: str,
+    collection: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Scroll/filter by payload field (no vector needed)."""
+    client = get_qdrant_client()
+    col = collection or settings.qdrant_papers_collection
+    results, _ = await client.scroll(
+        collection_name=col,
+        scroll_filter=Filter(must=[FieldCondition(key=key, match=MatchValue(value=value))]),
+        limit=limit,
+        with_payload=True,
+        with_vectors=False,
+    )
+    return [{"score": None, **r.payload} for r in results]

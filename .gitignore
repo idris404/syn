@@ -19,7 +19,7 @@ build/
 venv/
 env/
 ENV/
-
+.claude/
 # IDE
 .vscode/
 .idea/

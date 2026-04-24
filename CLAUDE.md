@@ -1,319 +1,396 @@
-# SYN — Phase 0 : Fondations & Infrastructure
+# SYN — Phase 1 : Pipeline multi-source & RAG avancé
 
-## Contexte du projet
+## État actuel du projet (Phase 0 complète)
 
-Tu construis **SYN**, un agent autonome de veille R&D pharma/biotech.
-Il surveille ClinicalTrials.gov, PubMed, bioRxiv, EMA/FDA et des documents
-privés clients pour produire des rapports de veille compétitive.
+Le projet SYN tourne sur `F:\Work\syn\`. Lis tout le code existant avant de
+toucher quoi que ce soit. La Phase 0 est complète et opérationnelle :
 
-**Phase 0 objectif** : infrastructure complète opérationnelle.
-Deliverable final : `POST /ingest/trials?query=pembrolizumab` insère des
-essais réels dans PostgreSQL + Qdrant, et `GET /trials/search?q=KRAS+inhibitor`
-retourne des résultats sémantiques réels.
-
----
-
-## Stack imposée (ne pas dévier)
-
-- **FastAPI** + uvicorn (async, hot-reload en dev)
-- **PostgreSQL 16** via SQLAlchemy 2.x async + asyncpg
-- **Qdrant** (vector store) via qdrant-client async
-- **Redis 7** (state agents — Phase 2, mais infra dès maintenant)
-- **Pydantic v2** + pydantic-settings pour config et validation
-- **sentence-transformers** `all-MiniLM-L6-v2` (embedding Phase 0 — sera swappé BioBERT en Phase 5)
-- **httpx** async pour tous les appels HTTP
-- **tenacity** pour retry avec backoff exponentiel
-- **loguru** pour tous les logs (pas print, pas logging stdlib)
-- **Alembic** initialisé dès maintenant même si pas encore utilisé
-- Docker Compose pour PG + Qdrant + Redis (FastAPI tourne en local, pas containerisé)
+- FastAPI sur port 8000, hot-reload
+- PostgreSQL sur port **5433** (pas 5432 — déjà occupé sur la machine)
+- Qdrant sur 6333, Redis sur 6379
+- `POST /ingest/trials` + `GET /trials/search` fonctionnels
+- **Biopython absent** (pas de wheel Python 3.13/Windows) — PubMed utilise
+  NCBI E-utilities via httpx + xml.etree. Ne pas changer ça.
+- Embedding : `all-MiniLM-L6-v2` (dim=384)
+- Collections Qdrant : `syn_trials`, `syn_papers`
 
 ---
 
-## Architecture imposée
+## Objectif Phase 1
 
-```
-syn/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI app + lifespan (startup/shutdown)
-│   ├── config.py            # Pydantic BaseSettings — toute config via .env
-│   ├── database.py          # SQLAlchemy async engine, session, Base, create_tables()
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── trials.py        # GET /trials/search, GET /trials/{nct_id}
-│   │   └── ingest.py        # POST /ingest/trials, POST /ingest/pubmed
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── trial.py         # ClinicalTrial SQLAlchemy ORM model
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   └── trial.py         # Pydantic schemas : TrialCreate, TrialResponse, IngestReport, TrialSearchParams
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── trial_service.py     # upsert_trial(), search_trials_hybrid(), get_by_nct_id()
-│   │   └── qdrant_service.py    # ensure_collections(), upsert_trial(), search_trials(), upsert_paper()
-│   └── ingestion/
-│       ├── __init__.py
-│       ├── clinical_trials.py   # ClinicalTrials.gov v2 API client
-│       └── pubmed.py            # NCBI Entrez client (Biopython)
-├── agents/                  # Vide — réservé Phase 2 LangGraph
-│   └── .gitkeep
-├── migrations/              # Alembic initialisé
-├── docker-compose.yml
-├── Dockerfile               # Pour les futures déploiements
-├── requirements.txt
-├── .env.example
-├── .env                     # À créer depuis .env.example
-└── CLAUDE.md                # Ce fichier — conventions du projet
-```
+Ajouter 3 nouvelles sources de données + améliorer le RAG existant.
+**Ne rien casser** de ce qui marche en Phase 0.
+
+### Deliverables obligatoires
+
+1. `POST /ingest/biorxiv?query=...&max_results=50` — préprints bioRxiv
+2. `POST /ingest/pdf` — upload PDF → parse → chunk → Qdrant
+3. `GET /papers/search?q=...&source=pubmed|biorxiv|pdf&limit=20` — recherche sémantique sur les papers
+4. `GET /trials/{nct_id}/papers` — papers PubMed/bioRxiv associés à un essai
+5. EMA scraping (statique) — approbations récentes dans `syn_ema` collection Qdrant
+6. RAG Q&A endpoint : `POST /rag/query` — question → retrieval Qdrant → réponse LLM Groq
 
 ---
 
-## Exigences de qualité senior (non négociables)
+## Ce que tu dois ajouter / modifier
 
-### Patterns obligatoires
-
-**UUID5 déterministe** sur toutes les entités :
-```python
-import uuid
-trial_uuid = uuid.uuid5(uuid.NAMESPACE_URL, nct_id)
-```
-Jamais de `uuid4()` pour les entités ingérées — on doit pouvoir re-ingérer sans doublons.
-
-**Upsert PostgreSQL** avec `ON CONFLICT DO UPDATE` — jamais d'INSERT brut
-sur des données qui peuvent exister.
-
-**Async partout** — pas une seule fonction bloquante dans le hot path.
-`httpx.AsyncClient`, `AsyncSession`, `AsyncQdrantClient`.
-
-**Rate limiting sur les API externes** :
-- ClinicalTrials.gov : `await asyncio.sleep(0.35)` entre les pages (3 req/s)
-- NCBI Entrez : 3 req/s sans API key, 10/s avec. Toujours set `Entrez.email`.
-
-**Retry avec backoff** via tenacity sur tous les appels HTTP externes :
-```python
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
-```
-
-**Générateurs async** pour l'ingestion — ne jamais charger 500 essais en
-mémoire d'un coup :
-```python
-async def fetch_trials(query: str, max_results: int) -> AsyncGenerator[TrialCreate, None]:
-    ...
-    yield trial
-```
-
-**Pas de print()** — loguru partout :
-```python
-from loguru import logger
-logger.info("...") / logger.warning("...") / logger.error("...")
-```
-
-### PostgreSQL — modèle `ClinicalTrial`
-
-Champs obligatoires :
-- `id` UUID PK (uuid5 sur nct_id)
-- `nct_id` VARCHAR(20) UNIQUE NOT NULL INDEX
-- `title` TEXT
-- `status` VARCHAR(50) INDEX — valeurs ClinicalTrials : RECRUITING, COMPLETED, ACTIVE_NOT_RECRUITING, etc.
-- `phase` VARCHAR(20) INDEX — PHASE1, PHASE2, PHASE3, PHASE4, N_A
-- `sponsor` VARCHAR(255) INDEX
-- `conditions` JSONB (liste de strings)
-- `interventions` JSONB (liste de {type, name})
-- `primary_outcomes` JSONB (liste de {measure, timeFrame})
-- `enrollment` INTEGER nullable
-- `start_date` DATE nullable
-- `completion_date` DATE nullable
-- `raw_data` JSONB — JSON source complet, toujours stocker
-- `qdrant_id` UUID nullable — linkage vers Qdrant
-- `created_at` / `updated_at` TIMESTAMP auto
-
-### Qdrant — deux collections distinctes
-
-`syn_trials` — essais cliniques vectorisés
-`syn_papers` — publications PubMed vectorisés
-
-Ne jamais mélanger les types dans une collection.
-
-Texte à vectoriser pour un essai :
-```python
-text = " | ".join([title, *conditions, *[i["name"] for i in interventions], sponsor])
-```
-
-Payload Qdrant doit toujours contenir `nct_id` pour le linkage retour vers PG.
-
-### Recherche hybride dans `trial_service.py`
+### 1. Nouveaux fichiers à créer
 
 ```
-1. Semantic search Qdrant → top-N nct_ids avec scores
-2. SELECT * FROM clinical_trials WHERE nct_id IN (...)  → données complètes PG
-3. Merge : score sémantique + données PG enrichies
-4. Retourner trié par score décroissant
+app/
+├── ingestion/
+│   ├── biorxiv.py       # bioRxiv API client
+│   ├── ema.py           # EMA EPAR scraper
+│   └── pdf_parser.py    # PDF → chunks → Qdrant
+├── api/
+│   ├── papers.py        # GET /papers/search, GET /papers/{pmid}
+│   └── rag.py           # POST /rag/query
+├── models/
+│   └── paper.py         # PaperRecord SQLAlchemy model (métadonnées papers)
+└── services/
+    └── rag_service.py   # retrieve() + generate() avec Groq
 ```
 
-### Config — `config.py`
+### 2. Fichiers à modifier
 
-Tout passe par `pydantic-settings` et `.env`. Zéro hardcode.
-```python
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    database_url: str
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_trials_collection: str = "syn_trials"
-    qdrant_papers_collection: str = "syn_papers"
-    redis_url: str = "redis://localhost:6379"
-    ncbi_email: str
-    ncbi_api_key: str = ""
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding_dim: int = 384
-    environment: str = "development"
-    ...
-```
-
-### Docker Compose
-
-Services : `postgres:16-alpine`, `qdrant/qdrant:latest`, `redis:7-alpine`.
-Healthchecks obligatoires sur postgres (`pg_isready`).
-Volumes nommés pour persistance.
-FastAPI **ne tourne pas** dans Docker Compose — en local direct via uvicorn.
-
-### Lifespan FastAPI
-
-```python
-@asynccontextmanager
-async def lifespan(app):
-    await create_tables()      # crée les tables PG
-    await ensure_collections() # crée les collections Qdrant
-    yield
-    # cleanup si besoin
-```
-
-### Endpoints
-
-`POST /ingest/trials?query=...&max_results=100`
-→ Lance fetch async ClinicalTrials, upsert PG + Qdrant, retourne `IngestReport`
-```json
-{"query": "pembrolizumab", "total_fetched": 87, "inserted": 82, "updated": 5, "skipped": 0, "errors": 0, "duration_seconds": 12.4}
-```
-
-`POST /ingest/pubmed?query=...&max_results=50`
-→ Lance fetch NCBI Entrez, parse abstracts, vectorise, upsert Qdrant `syn_papers`
-
-`GET /trials/search?q=...&phase=PHASE3&status=RECRUITING&limit=20`
-→ Recherche hybride, retourne `{"query": "...", "count": N, "results": [...]}`
-
-`GET /trials/{nct_id}`
-→ Détail complet depuis PG
-
-`GET /health`
-→ `{"status": "ok", "service": "syn"}`
+- `app/main.py` — inclure les nouveaux routers (papers, rag)
+- `app/services/qdrant_service.py` — ajouter `upsert_paper()`, `search_papers()`, `ensure_collections()` étendu
+- `app/schemas/trial.py` — ajouter schemas Paper, RAGQuery, RAGResponse
+- `docker-compose.yml` — rien à changer
+- `requirements.txt` — ajouter : `PyMuPDF`, `pdfplumber`, `python-multipart`, `groq`, `playwright`
 
 ---
 
-## ClinicalTrials.gov v2 API
+## Spécifications techniques détaillées
 
-URL : `https://clinicaltrials.gov/api/v2/studies`
-Format : JSON
-Auth : aucune
-Pagination : `pageToken` dans la réponse → passer en paramètre de la requête suivante
+### bioRxiv (`app/ingestion/biorxiv.py`)
 
-Params clés :
-- `query.term` — terme de recherche
-- `pageSize` — max 1000, utiliser 50
-- `format=json`
+API officielle : `https://api.biorxiv.org/details/biorxiv/{interval}/{cursor}/{format}`
 
-Structure réponse :
-```json
+- `interval` : ex `2024-01-01/2024-12-31` ou `30d` pour les 30 derniers jours
+- `format` : `json`
+- Pagination via `cursor` (offset)
+- Rate limit : 1 req/s — `asyncio.sleep(1.0)` entre les pages
+
+Champs à extraire :
+
+```
+doi, title, authors (list[str]), abstract, category, date, version
+server (biorxiv|medrxiv)
+```
+
+Générateur async comme `fetch_trials()`. UUID5 sur `doi`.
+
+Stockage : **Qdrant uniquement** dans `syn_papers`.
+Payload : `{source: "biorxiv", doi, title, abstract[:500], category, date, authors}`
+Texte vectorisé : `title + " " + abstract`
+
+Endpoint :
+
+```
+POST /ingest/biorxiv?query=oncology&days=30&max_results=100
+```
+
+`days` = filtrer les N derniers jours. Default 30.
+
+### EMA scraper (`app/ingestion/ema.py`)
+
+URL : `https://www.ema.europa.eu/en/medicines/download-medicine-data`
+CSV téléchargeable — pas de scraping dynamique nécessaire.
+URL directe CSV : `https://www.ema.europa.eu/sites/default/files/Medicines_output_european_public_assessment_reports.xlsx`
+
+Télécharger le fichier Excel (ou CSV selon disponibilité) via httpx.
+Parser avec `pandas` ou directement avec `openpyxl`.
+Colonnes importantes : `Medicine name`, `Active substance`, `Product number`,
+`Patient safety`, `Authorisation status`, `ATC code`, `International non-proprietary name (INN)`,
+`First published`, `Revision date`, `Category`, `Generic`, `Biosimilar`,
+`Orphan medicine`, `Exceptional circumstances`, `URL`
+
+UUID5 sur `Product number`.
+
+Nouvelle collection Qdrant : `syn_ema`.
+Texte vectorisé : `medicine_name + " " + active_substance + " " + inn`
+Payload : tout les champs ci-dessus.
+
+Endpoint :
+
+```
+POST /ingest/ema
+```
+
+Pas de paramètres — télécharge et ingère tout le fichier (filtrer sur
+`Authorisation status == "Authorised"`).
+
+### PDF Parser (`app/ingestion/pdf_parser.py`)
+
+Utiliser **PyMuPDF** (`fitz`) comme parseur principal, **pdfplumber** en fallback
+pour les PDFs avec tableaux complexes.
+
+Pipeline :
+
+```python
+1. Ouvrir le PDF avec fitz
+2. Extraire le texte page par page
+3. Nettoyer (strip headers/footers répétitifs, normaliser whitespace)
+4. Chunking sémantique :
+   - Chunk size : 512 tokens (~400 mots)
+   - Overlap : 50 tokens
+   - Respecter les limites de paragraphes (ne pas couper mid-phrase)
+   - Détecter les sections (Abstract, Methods, Results, Discussion) et les
+     stocker dans le metadata du chunk
+5. UUID5 sur (filename + chunk_index)
+6. Upsert Qdrant syn_papers
+```
+
+Payload par chunk :
+
+```python
 {
-  "studies": [...],
-  "nextPageToken": "..."
+    "source": "pdf",
+    "filename": str,
+    "page": int,
+    "chunk_index": int,
+    "section": str,   # "abstract" | "methods" | "results" | "discussion" | "other"
+    "total_chunks": int,
+    "upload_id": str  # UUID4 de session d'upload
 }
 ```
 
-Structure d'un study (champs importants) :
+Endpoint upload :
+
 ```
-protocolSection.identificationModule.nctId
-protocolSection.identificationModule.briefTitle
-protocolSection.statusModule.overallStatus
-protocolSection.statusModule.startDateStruct.date
-protocolSection.statusModule.primaryCompletionDateStruct.date
-protocolSection.designModule.phases[]
-protocolSection.designModule.enrollmentInfo.count
-protocolSection.sponsorCollaboratorsModule.leadSponsor.name
-protocolSection.conditionsModule.conditions[]
-protocolSection.armsInterventionsModule.interventions[].type/name
-protocolSection.outcomesModule.primaryOutcomes[].measure/timeFrame
+POST /ingest/pdf
+Content-Type: multipart/form-data
+Body: file (PDF), title (str, optionnel), source_type (str: "trial_result"|"paper"|"report")
 ```
 
----
+Utiliser `python-multipart` pour le form data FastAPI.
+Taille max : 50MB. Retourner :
 
-## NCBI Entrez (PubMed)
+```json
+{
+  "filename": "study_results.pdf",
+  "pages": 42,
+  "chunks_created": 187,
+  "upload_id": "uuid4",
+  "duration_seconds": 3.2
+}
+```
 
-Utiliser **Biopython** `Bio.Entrez` :
+### PostgreSQL — nouveau model `PaperRecord` (`app/models/paper.py`)
+
 ```python
-from Bio import Entrez
-Entrez.email = settings.ncbi_email
-
-# esearch → liste PMIDs
-handle = Entrez.esearch(db="pubmed", term=query, retmax=max_results)
-
-# efetch batch → abstracts XML
-handle = Entrez.efetch(db="pubmed", id=",".join(pmids), rettype="xml", retmode="xml")
-records = Entrez.read(handle)
+class PaperRecord(Base):
+    __tablename__ = "paper_records"
+    id: UUID PK (uuid5)
+    source: str  # "pubmed" | "biorxiv" | "pdf" | "ema"
+    external_id: str UNIQUE  # pmid, doi, product_number, ou upload_id
+    title: str
+    abstract: Optional[str]
+    authors: JSONB list[str]
+    published_date: Optional[date]
+    url: Optional[str]
+    qdrant_id: Optional[UUID]
+    nct_ids_mentioned: JSONB list[str]  # linkage vers essais
+    metadata: JSONB  # champs spécifiques à la source
+    created_at: datetime
 ```
 
-Champs à extraire : PMID, ArticleTitle, Abstract, Journal, Year, MeSH terms.
-Stocker dans Qdrant `syn_papers` avec payload `{pmid, title, journal, year, mesh_terms}`.
+Migration Alembic à générer et appliquer après création du modèle.
+
+### RAG Service (`app/services/rag_service.py`)
+
+```python
+async def retrieve(query: str, sources: list[str] = None, limit: int = 5) -> list[dict]:
+    """
+    Recherche sémantique multi-collection.
+    sources = ["trials", "papers", "ema"] ou None pour tout
+    Merge et re-rank par score.
+    """
+
+async def generate(query: str, context: list[dict], model: str = "llama-3.3-70b-versatile") -> str:
+    """
+    Génère une réponse via Groq.
+    context = chunks récupérés par retrieve()
+    Prompt structuré : system (rôle analyste) + context + question
+    """
+```
+
+Prompt système pour `generate()` :
+
+```
+Tu es un analyste senior en veille R&D pharma/biotech.
+Tu réponds uniquement en te basant sur les données fournies dans le contexte.
+Si l'information n'est pas dans le contexte, dis-le clairement.
+Format de réponse : 2-3 paragraphes structurés, langage professionnel.
+```
+
+Endpoint RAG :
+
+```
+POST /rag/query
+{
+  "question": "Quels sont les essais de phase 3 en cours sur les inhibiteurs PD-1 pour le NSCLC ?",
+  "sources": ["trials", "papers"],  // optionnel, défaut = tout
+  "limit": 5  // nb de chunks à retriever
+}
+```
+
+Réponse :
+
+```json
+{
+  "question": "...",
+  "answer": "...",
+  "sources_used": [
+    {"nct_id": "NCT...", "title": "...", "score": 0.89},
+    ...
+  ],
+  "model": "llama-3.3-70b-versatile",
+  "tokens_used": 1243
+}
+```
+
+### Endpoint `/trials/{nct_id}/papers`
+
+Dans `app/api/trials.py`, ajouter :
+
+```
+GET /trials/{nct_id}/papers
+```
+
+Logique :
+
+1. Chercher dans Qdrant `syn_papers` les documents dont le payload
+   `nct_ids_mentioned` contient `nct_id`
+2. OU chercher sémantiquement avec le titre de l'essai comme query
+3. Merger, dédupliquer, retourner top-10
+
+### Endpoint `/papers/search`
+
+```
+GET /papers/search?q=...&source=pubmed&limit=20
+```
+
+Source filter via payload Qdrant `source == "pubmed"`.
+Retourner : score, title, source, external_id, abstract[:300], date.
 
 ---
 
-## requirements.txt complet
+## Chunking — implémentation précise
 
+```python
+def chunk_text(text: str, chunk_size: int = 400, overlap: int = 50) -> list[str]:
+    """
+    Chunking en mots (plus simple et fiable que tokens pour du texte biomédical).
+    chunk_size = 400 mots, overlap = 50 mots.
+    Essaie de couper sur les fins de phrases (". ") quand possible.
+    """
+    words = text.split()
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = min(start + chunk_size, len(words))
+        chunk = " ".join(words[start:end])
+        # Couper sur une fin de phrase si possible dans les 50 derniers mots
+        if end < len(words):
+            last_period = chunk.rfind(". ", len(chunk) - 300)
+            if last_period > 0:
+                chunk = chunk[:last_period + 1]
+        chunks.append(chunk)
+        start += chunk_size - overlap
+    return chunks
 ```
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-alembic==1.14.0
-pydantic==2.10.3
-pydantic-settings==2.6.1
-qdrant-client==1.12.1
-sentence-transformers==3.3.1
-httpx==0.28.1
-biopython==1.84
-python-dateutil==2.9.0
-redis==5.2.1
-python-dotenv==1.0.1
-tenacity==9.0.0
-loguru==0.7.3
+
+Détection de section (heuristique simple sur les headers) :
+
+```python
+SECTION_PATTERNS = {
+    "abstract": r"(?i)^(abstract|summary|résumé)",
+    "methods": r"(?i)^(methods?|materials?\s+and\s+methods?|methodology|patients?\s+and\s+methods?)",
+    "results": r"(?i)^(results?|findings?|outcomes?)",
+    "discussion": r"(?i)^(discussion|conclusions?|conclusion\s+and\s+discussion)",
+}
 ```
 
 ---
 
-## Ce que tu dois produire
+## requirements.txt — ajouts Phase 1
 
-1. **Tous les fichiers** de l'arborescence ci-dessus, complets et fonctionnels
-2. **`docker-compose.yml`** avec les 3 services + healthchecks + volumes
-3. **`.env.example`** avec toutes les variables documentées
-4. **`COMMANDS.md`** avec les commandes PowerShell dans l'ordre :
-   - `docker compose up -d`
-   - setup venv + pip install
-   - `uvicorn app.main:app --reload`
-   - les 4 commandes `Invoke-RestMethod` de test end-to-end
-   - commandes de vérification PostgreSQL via `docker exec`
+Ajouter à la fin du requirements.txt existant :
 
-## Validation finale
+```
+# Phase 1 additions
+PyMuPDF==1.24.14
+pdfplumber==0.11.4
+python-multipart==0.0.20
+groq==0.13.1
+openpyxl==3.1.5
+pandas==2.2.3
+```
 
-Le projet est correct quand ces 3 commandes PowerShell fonctionnent sans erreur :
+Ne pas toucher aux versions existantes.
+
+---
+
+## Règles de qualité (identiques Phase 0, rappel)
+
+- UUID5 sur tous les external IDs (doi, pmid, product_number)
+- Async partout — pas de blocking calls
+- Rate limiting sur toutes les APIs externes
+- Retry tenacity sur les appels HTTP
+- Générateurs async pour l'ingestion (pas de listes en mémoire)
+- loguru pour tous les logs
+- Zéro hardcode — tout passe par config.py / .env
+
+**Ne pas régénérer** les fichiers Phase 0 qui fonctionnent. Modifier
+uniquement ce qui est nécessaire (`main.py` pour les nouveaux routers,
+`qdrant_service.py` pour les nouvelles collections, `requirements.txt`).
+
+---
+
+## Ordre d'exécution
+
+Fais les choses dans cet ordre pour éviter les dépendances cassées :
+
+1. `requirements.txt` — ajouter les nouvelles dépendances
+2. `app/models/paper.py` — créer le model SQLAlchemy
+3. `app/schemas/trial.py` — ajouter les nouveaux schemas
+4. `app/services/qdrant_service.py` — étendre avec les nouvelles collections
+5. `app/ingestion/biorxiv.py` — client bioRxiv
+6. `app/ingestion/ema.py` — EMA scraper
+7. `app/ingestion/pdf_parser.py` — PDF pipeline
+8. `app/services/rag_service.py` — retrieve + generate
+9. `app/api/papers.py` — endpoints papers
+10. `app/api/rag.py` — endpoint RAG
+11. `app/api/trials.py` — ajouter `/trials/{nct_id}/papers`
+12. `app/api/ingest.py` — ajouter routes biorxiv, ema, pdf
+13. `app/main.py` — inclure les nouveaux routers
+14. Générer la migration Alembic pour `paper_records`
+
+---
+
+## Validation Phase 1
+
+La phase est complète quand ces commandes fonctionnent sans erreur :
 
 ```powershell
-# 1. Ingestion réelle
-Invoke-RestMethod -Uri "http://localhost:8000/ingest/trials?query=pembrolizumab&max_results=50" -Method POST
+# 1. Ingestion bioRxiv
+Invoke-RestMethod -Uri "http://localhost:8000/ingest/biorxiv?query=KRAS+inhibitor&days=90&max_results=30" -Method POST
 
-# 2. Recherche sémantique avec résultats
-Invoke-RestMethod -Uri "http://localhost:8000/trials/search?q=checkpoint+inhibitor+lung+cancer&phase=PHASE3"
+# 2. Ingestion EMA
+Invoke-RestMethod -Uri "http://localhost:8000/ingest/ema" -Method POST
 
-# 3. Count PostgreSQL > 0
-docker exec syn-postgres psql -U syn -d syn -c "SELECT COUNT(*) FROM clinical_trials;"
+# 3. Search papers
+Invoke-RestMethod -Uri "http://localhost:8000/papers/search?q=checkpoint+inhibitor+NSCLC&limit=10"
+
+# 4. RAG query
+$body = '{"question": "Quels essais de phase 3 recrutent sur les inhibiteurs PD-1 ?", "sources": ["trials"]}'
+Invoke-RestMethod -Uri "http://localhost:8000/rag/query" -Method POST -Body $body -ContentType "application/json"
+
+# 5. PDF upload (crée un PDF de test d'abord)
+# Invoke-RestMethod -Uri "http://localhost:8000/ingest/pdf" -Method POST -Form @{file=Get-Item "test.pdf"}
+
+# 6. PostgreSQL — vérifier paper_records
+docker exec syn-postgres psql -U syn -d syn -c "SELECT source, COUNT(*) FROM paper_records GROUP BY source;"
 ```

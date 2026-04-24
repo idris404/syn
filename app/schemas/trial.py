@@ -71,3 +71,46 @@ class TrialSearchResponse(BaseModel):
     query: str
     count: int
     results: list[TrialResponse]
+
+
+# Phase 1 schemas
+
+class PaperResponse(BaseModel):
+    id: str
+    source: str
+    title: str | None
+    abstract: str | None
+    score: float | None = None
+    external_id: str | None = None
+    date: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    url: str | None = None
+
+
+class RAGQuery(BaseModel):
+    question: str
+    sources: list[str] | None = None  # ["trials", "papers", "ema"] or None = all
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class RAGSourceUsed(BaseModel):
+    nct_id: str | None = None
+    title: str | None = None
+    score: float | None = None
+    source: str | None = None
+
+
+class RAGResponse(BaseModel):
+    question: str
+    answer: str
+    sources_used: list[RAGSourceUsed]
+    model: str
+    tokens_used: int | None = None
+
+
+class PDFUploadResponse(BaseModel):
+    filename: str
+    pages: int
+    chunks_created: int
+    upload_id: str
+    duration_seconds: float

@@ -13,8 +13,13 @@ if config.config_file_name is not None:
 
 from app.database import Base  # noqa: E402
 from app.models import trial  # noqa: E402, F401
+from app.models import paper  # noqa: E402, F401
+from app.config import settings  # noqa: E402
 
 target_metadata = Base.metadata
+
+# Override DB URL from settings (respects .env port)
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 
 def run_migrations_offline() -> None:
