@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --syn-bg: #0a0a0f;
+  --syn-surface: #12121a;
+  --syn-border: #1e1e2e;
+  --syn-accent: #00b4d8;
+  --syn-success: #22c55e;
+  --syn-warning: #f59e0b;
+  --syn-danger: #ef4444;
+  --syn-text: #e2e8f0;
+  --syn-muted: #64748b;
+  --radius: 0.75rem;
+}
+
+* {
+  border-color: var(--syn-border);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  color: var(--syn-text);
+  background:
+    radial-gradient(1000px 500px at 0% -10%, rgb(0 180 216 / 0.12), transparent 55%),
+    radial-gradient(900px 420px at 100% 0%, rgb(34 197 94 / 0.08), transparent 52%),
+    linear-gradient(180deg, #09090e 0%, var(--syn-bg) 100%);
+  font-family: var(--font-sans), "Segoe UI", sans-serif;
+}
+
+.syn-surface {
+  background-color: color-mix(in oklab, var(--syn-surface) 92%, black 8%);
+}
+
+.status-recruiting {
+  background-color: rgb(34 197 94 / 0.1);
+  color: rgb(74 222 128);
+}
+
+.status-completed {
+  background-color: rgb(59 130 246 / 0.1);
+  color: rgb(96 165 250);
+}
+
+.status-active-not-recruiting {
+  background-color: rgb(234 179 8 / 0.1);
+  color: rgb(250 204 21);
+}
+
+.status-default {
+  background-color: rgb(100 116 139 / 0.15);
+  color: rgb(148 163 184);
+}
+
+@media print {
+  nav,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    font-size: 12pt;
+    background: white;
+    color: black;
+  }
+}

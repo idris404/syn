@@ -7,6 +7,7 @@ import httpx
 from loguru import logger
 
 from agents.state import SynState
+from app.api.ws import broadcast
 from app.config import settings
 
 _HISTORY_KEY = "syn:runs:history"
@@ -204,6 +205,19 @@ async def publisher_node(state: SynState) -> dict:
         errors.append(f"publisher:discord:{e}")
 
     await _save_to_redis(state, notion_url)
+
+    try:
+        await broadcast(
+            {
+                "type": "run_complete",
+                "run_id": state.get("run_id"),
+                "title": state.get("report_title"),
+                "summary": state.get("report_summary"),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Publisher] WebSocket broadcast error: {e}")
 
     logger.info(f"[Publisher] done in {time.monotonic()-t0:.1f}s")
     result: dict = {"status": "done", "current_agent": "done"}
