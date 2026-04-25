@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     groq_api_key: str = ""
     qdrant_ema_collection: str = "syn_ema"
+    notion_token: str = ""
+    notion_reports_db_id: str = ""
+    discord_webhook_url: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
