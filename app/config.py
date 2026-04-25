@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     notion_token: str = ""
     notion_reports_db_id: str = ""
     discord_webhook_url: str = ""
+    # Vision AI
+    vision_provider: str = "groq"
+    openai_api_key: str = ""
+    vision_max_figures_per_pdf: int = 10
+    vision_dpi: int = 150
+    qdrant_figures_collection: str = "syn_figures"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

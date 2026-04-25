@@ -13,7 +13,7 @@ dist/
 build/
 *.egg
 *.whl
-
+.CLAUDE.md
 # Virtual environments
 .venv/
 venv/

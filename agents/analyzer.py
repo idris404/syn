@@ -13,7 +13,7 @@ Analyse les données suivantes et identifie les points clés.
 
 Données collectées : {raw_results_summary}
 Contexte documentaire : {rag_context}
-
+{visual_context}
 Produis :
 1. Une analyse synthétique (3-4 paragraphes)
 2. Les findings clés (max 5) avec niveau d'importance
@@ -60,9 +60,48 @@ def _build_rag_context(raw_results: list[dict]) -> str:
     return "\n\n".join(snippets[:8]) if snippets else "Pas de contexte disponible."
 
 
+async def _build_visual_context(targets: list[dict]) -> str:
+    """Retrieve visual findings from syn_figures and format them for the prompt."""
+    if not targets:
+        return ""
+    try:
+        from app.services import qdrant_service
+        query = targets[0].get("query", "") if targets else ""
+        if not query:
+            return ""
+        visual_findings = await qdrant_service.search_figures(query=query, limit=5)
+        if not visual_findings:
+            return ""
+
+        lines = ["\nDonnées visuelles extraites (courbes, forest plots, tableaux) :"]
+        for fig in visual_findings:
+            payload = fig.get("payload", {})
+            fig_type = payload.get("figure_type", "figure")
+            hr = payload.get("hr")
+            p_value = payload.get("p_value")
+            endpoint = payload.get("endpoint", "")
+            interp = fig.get("raw_interpretation", "")[:200]
+
+            line = f"- [{fig_type}]"
+            if endpoint:
+                line += f" endpoint={endpoint}"
+            if hr is not None:
+                line += f" HR={hr}"
+            if p_value is not None:
+                line += f" p={p_value}"
+            line += f" — {interp}"
+            lines.append(line)
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.warning(f"[Analyzer] visual context fetch error: {e}")
+        return ""
+
+
 async def analyzer_node(state: SynState) -> dict:
     t0 = time.monotonic()
     raw_results = state.get("raw_results") or []
+    targets = state.get("targets") or []
     logger.info(f"[Analyzer] start — {len(raw_results)} result groups")
 
     try:
@@ -76,10 +115,15 @@ async def analyzer_node(state: SynState) -> dict:
 
         raw_summary = _summarize_results(raw_results)
         rag_ctx = _build_rag_context(raw_results)
+        visual_ctx = await _build_visual_context(targets)
+
+        if visual_ctx:
+            logger.info(f"[Analyzer] visual context: {len(visual_ctx)} chars")
 
         prompt = _ANALYZER_PROMPT.format(
             raw_results_summary=raw_summary,
             rag_context=rag_ctx,
+            visual_context=visual_ctx,
         )
 
         client = AsyncGroq(api_key=settings.groq_api_key)
@@ -96,6 +140,7 @@ async def analyzer_node(state: SynState) -> dict:
         logger.info(
             f"[Analyzer] done in {time.monotonic()-t0:.1f}s — "
             f"{len(parsed.get('key_findings', []))} findings"
+            + (f" + visual data" if visual_ctx else "")
         )
         return {
             "analysis": parsed.get("analysis", ""),

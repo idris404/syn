@@ -19,6 +19,7 @@ async def ensure_collections() -> None:
         settings.qdrant_trials_collection,
         settings.qdrant_papers_collection,
         settings.qdrant_ema_collection,
+        settings.qdrant_figures_collection,
     )
     for collection_name in collections:
         exists = await client.collection_exists(collection_name)
@@ -124,3 +125,60 @@ async def search_papers_by_payload(
         with_vectors=False,
     )
     return [{"score": None, **r.payload} for r in results]
+
+
+# ── Figures (Phase 3) ──────────────────────────────────────────────────────
+
+async def upsert_figure(
+    figure_id: str,
+    vector: list[float],
+    payload: dict,
+) -> None:
+    """Upsert a figure interpretation into syn_figures collection."""
+    client = get_qdrant_client()
+    point = PointStruct(id=figure_id, vector=vector, payload=payload)
+    await client.upsert(collection_name=settings.qdrant_figures_collection, points=[point])
+
+
+async def search_figures(
+    query: str,
+    limit: int = 5,
+    figure_type_filter: str | None = None,
+) -> list[dict]:
+    """Semantic search on figure interpretations."""
+    from app.services.trial_service import get_embedding_model
+    model = get_embedding_model()
+    vector = model.encode(query).tolist()
+
+    client = get_qdrant_client()
+    query_filter = None
+    if figure_type_filter:
+        query_filter = Filter(
+            must=[FieldCondition(key="figure_type", match=MatchValue(value=figure_type_filter))]
+        )
+
+    results = await client.search(
+        collection_name=settings.qdrant_figures_collection,
+        query_vector=vector,
+        limit=limit,
+        with_payload=True,
+        query_filter=query_filter,
+    )
+    return [{"score": hit.score, "payload": hit.payload, "raw_interpretation": hit.payload.get("raw_interpretation", "")} for hit in results]
+
+
+async def get_figures_by_upload_id(upload_id: str, limit: int = 50) -> list[dict]:
+    """Scroll figures by upload_id payload field."""
+    client = get_qdrant_client()
+    try:
+        results, _ = await client.scroll(
+            collection_name=settings.qdrant_figures_collection,
+            scroll_filter=Filter(must=[FieldCondition(key="upload_id", match=MatchValue(value=upload_id))]),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return [{"score": None, **r.payload} for r in results]
+    except Exception as e:
+        logger.warning(f"get_figures_by_upload_id error: {e}")
+        return []
