@@ -1,111 +1,127 @@
-# SYN — Phase 4 : Dashboard Next.js
+# SYN — Phase 5 : Production & Deploy
 
-## État actuel du projet (Phases 0 + 1 + 2 + 3 complètes)
+## État actuel du projet (Phases 0→4 complètes)
 
 Lis tout le code existant avant de toucher quoi que ce soit.
 
-**Infrastructure** : PostgreSQL 5433, Qdrant 6333, Redis 6379
-**Backend FastAPI** opérationnel sur port 8000 avec :
-
-- `/trials/*` — essais ClinicalTrials
-- `/papers/*`, `/figures/*` — publications et figures
-- `/ingest/*` — ingestion (trials, pubmed, biorxiv, ema, pdf, pdf/vision)
-- `/rag/query` — RAG Groq llama-3.3-70b
-- `/agents/run`, `/agents/runs` — pipeline LangGraph autonome
-- Vision AI : Groq llama-3.2-90b-vision-preview
-  **Collections Qdrant** : syn_trials, syn_papers, syn_ema, syn_figures
-  **Models PG** : ClinicalTrial, PaperRecord, FigureRecord
-  **Biopython absent** — PubMed via httpx + xml.etree, ne pas changer
+**Backend FastAPI** port 8000 — tous les endpoints opérationnels
+**Frontend Next.js 15** dans `frontend/` — build validé, 6 pages, WebSocket
+**Embedding** : `all-MiniLM-L6-v2` (dim=384) — on ne change pas ça
+**Collections Qdrant** : syn_trials, syn_papers, syn_ema, syn_figures
+**PostgreSQL 5433** : ClinicalTrial, PaperRecord, FigureRecord
+**Biopython absent** — PubMed via httpx + xml.etree, ne pas changer
 
 ---
 
-## Objectif Phase 4
+## Objectif Phase 5
 
-Construire le dashboard Next.js qui consomme le FastAPI existant.
-Le dashboard est une **app séparée** dans `frontend/` à la racine du projet.
-Ne rien modifier dans `app/` sauf ajouter CORS et 2-3 endpoints WebSocket.
+Rendre SYN déployable et accessible publiquement via une URL Railway.
+Objectif : envoyer un lien qui marche à PredictCan ou un client biotech.
 
 ### Deliverables obligatoires
 
-1. Dashboard Next.js 14 App Router + TypeScript
-2. Page `/` — vue d'ensemble : KPIs, derniers runs agents, alertes récentes
-3. Page `/trials` — liste + recherche sémantique temps réel des essais
-4. Page `/trials/[nct_id]` — détail essai + papers associés + figures
-5. Page `/reports` — historique des rapports générés par les agents
-6. Page `/reports/[run_id]` — rapport complet en Markdown rendu
-7. Page `/ingest` — interface d'upload PDF (texte + vision)
-8. WebSocket alertes temps réel — nouveau run agent terminé → notification UI
-9. Export PDF d'un rapport depuis le dashboard
+1. `Dockerfile` FastAPI production-ready
+2. `frontend/Dockerfile` Next.js standalone
+3. `docker-compose.prod.yml` — stack complète (FastAPI + PG + Qdrant + Redis + Frontend)
+4. `.env.prod.example` — variables de production documentées
+5. `railway.toml` — config déploiement Railway pour FastAPI
+6. `README.md` — portfolio complet avec architecture, stack, screenshots placeholder, quick start
 
 ---
 
-## Structure projet
+## Nouveaux fichiers à créer
 
 ```
 syn/
-├── app/                    # FastAPI existant — ne pas toucher sauf CORS + WS
-│   └── api/
-│       └── ws.py           # NOUVEAU : WebSocket endpoint
-├── frontend/               # NOUVEAU : Next.js app
-│   ├── app/
-│   │   ├── layout.tsx
-│   │   ├── page.tsx                    # Dashboard home
-│   │   ├── trials/
-│   │   │   ├── page.tsx               # Liste essais + search
-│   │   │   └── [nct_id]/
-│   │   │       └── page.tsx           # Détail essai
-│   │   ├── reports/
-│   │   │   ├── page.tsx               # Liste rapports
-│   │   │   └── [run_id]/
-│   │   │       └── page.tsx           # Rapport complet
-│   │   └── ingest/
-│   │       └── page.tsx               # Upload PDF
-│   ├── components/
-│   │   ├── ui/                        # shadcn/ui components
-│   │   ├── TrialCard.tsx
-│   │   ├── TrialSearchBar.tsx
-│   │   ├── AgentRunCard.tsx
-│   │   ├── ReportViewer.tsx
-│   │   ├── FigureGallery.tsx
-│   │   ├── KpiCard.tsx
-│   │   ├── AlertBanner.tsx
-│   │   └── PdfUploader.tsx
-│   ├── lib/
-│   │   ├── api.ts                     # Fetch wrapper vers FastAPI
-│   │   └── types.ts                   # Types TypeScript (miroir des schemas Pydantic)
-│   ├── hooks/
-│   │   └── useWebSocket.ts            # Hook WebSocket alertes temps réel
-│   ├── package.json
-│   ├── next.config.ts
-│   ├── tailwind.config.ts
-│   └── tsconfig.json
+├── Dockerfile                   # FastAPI production
+├── docker-compose.prod.yml      # Stack complète prod
+├── .env.prod.example            # Variables prod documentées
+├── railway.toml                 # Config Railway
+├── .dockerignore
+├── README.md                    # Portfolio README
+└── frontend/
+    └── Dockerfile               # Next.js standalone
 ```
+
+## Fichiers à modifier
+
+- `frontend/next.config.ts` — ajouter `output: 'standalone'`
+- `app/config.py` — ajouter `allowed_origins` configurable pour CORS prod
+- `app/main.py` — CORS origins depuis config (pas hardcodé localhost)
+- `.gitignore` — ajouter patterns prod
 
 ---
 
-## Setup Next.js 15
+## Spécifications techniques
 
-```bash
-# Depuis la racine du projet syn/
-cd F:\Work\syn
-npx create-next-app@15 frontend --typescript --tailwind --app --no-src-dir --import-alias "@/*"
-cd frontend
-npx shadcn@latest init
-npx shadcn@latest add button card badge input table tabs scroll-area separator skeleton toast
-npm install recharts react-markdown remark-gfm lucide-react
+### `Dockerfile` FastAPI
+
+```dockerfile
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pré-télécharger le modèle embedding dans l'image
+# Évite un cold start de 30s au premier démarrage
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
+COPY app/ ./app/
+COPY agents/ ./agents/
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
 ```
 
-`next.config.ts` — proxy vers FastAPI pour éviter CORS en dev :
+### `frontend/Dockerfile` — Next.js standalone
+
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json .
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+### `frontend/next.config.ts` — modifier
+
+Ajouter `output: 'standalone'` à la config existante :
 
 ```typescript
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone", // AJOUTER — nécessaire pour le Dockerfile
   async rewrites() {
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8000/:path*",
+        destination: process.env.NEXT_PUBLIC_API_URL
+          ? `${process.env.NEXT_PUBLIC_API_URL}/:path*`
+          : "http://localhost:8000/:path*",
       },
     ];
   },
@@ -113,596 +129,342 @@ const nextConfig: NextConfig = {
 export default nextConfig;
 ```
 
-Avec ce proxy, le frontend appelle `/api/trials/search` et Next.js
-forward vers `http://localhost:8000/trials/search`. Zero CORS à gérer en dev.
+### `docker-compose.prod.yml`
 
-**Next.js 15 — breaking changes à respecter partout :**
+```yaml
+services:
+  fastapi:
+    build: .
+    container_name: syn-api
+    ports:
+      - "8000:8000"
+    env_file: .env.prod
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://syn:${POSTGRES_PASSWORD}@postgres:5432/syn
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
-1. **Params dynamiques sont des Promises** — dans toutes les pages `[nct_id]` et `[run_id]` :
+  postgres:
+    image: postgres:16-alpine
+    container_name: syn-postgres
+    environment:
+      POSTGRES_USER: syn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: syn
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U syn -d syn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
-```typescript
-// Next.js 15 — params est une Promise, toujours await
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ nct_id: string }>;
-}) {
-  const { nct_id } = await params;
-  // ...
-}
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: syn-qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: syn-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: syn-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://fastapi:8000
+    depends_on:
+      - fastapi
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  qdrant_data:
+  redis_data:
 ```
 
-2. **`searchParams` est une Promise** dans les Server Components :
+### `.env.prod.example`
 
-```typescript
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ q?: string; phase?: string }>;
-}) {
-  const { q, phase } = await searchParams;
-}
+```bash
+# PostgreSQL
+POSTGRES_PASSWORD=change_me_strong_password
+
+# Redis
+REDIS_PASSWORD=change_me_strong_password
+
+# Base URLs (dans le container, on utilise les noms de service Docker)
+DATABASE_URL=postgresql+asyncpg://syn:POSTGRES_PASSWORD@postgres:5432/syn
+QDRANT_URL=http://qdrant:6333
+REDIS_URL=redis://:REDIS_PASSWORD@redis:6379
+
+# AI APIs
+GROQ_API_KEY=gsk_...
+VISION_PROVIDER=groq
+
+# NCBI
+NCBI_EMAIL=ton@email.com
+
+# Outputs
+NOTION_TOKEN=secret_...
+NOTION_REPORTS_DB_ID=...
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+
+# App
+ENVIRONMENT=production
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_DIM=384
+LOG_LEVEL=INFO
+
+# CORS — frontend URL en production
+ALLOWED_ORIGINS=https://syn.up.railway.app,http://localhost:3000
 ```
 
-3. **Turbopack activé par défaut** en dev (`next dev --turbo`). Si un package
-   est incompatible, revenir à `next dev` sans flag.
+### `app/config.py` — modifier
 
-4. **React 19** — `use()` hook disponible pour unwrapper les Promises côté client :
-
-```typescript
-"use client";
-import { use } from "react";
-
-export default function Page({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params); // version client avec React 19
-}
-```
-
----
-
-## FastAPI — modifications minimales
-
-### CORS (`app/main.py`)
-
-Ajouter avant les routers :
+Ajouter :
 
 ```python
-from fastapi.middleware.cors import CORSMiddleware
+allowed_origins: list[str] = ["http://localhost:3000"]
+```
 
+### `app/main.py` — modifier CORS
+
+Remplacer le `allow_origins` hardcodé par :
+
+```python
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 ```
 
-### WebSocket (`app/api/ws.py`) — NOUVEAU
+### `railway.toml`
 
-```python
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from loguru import logger
-import asyncio, json
+```toml
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
 
-router = APIRouter(prefix="/ws", tags=["websocket"])
+[deploy]
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 3
 
-# Connexions actives
-_connections: list[WebSocket] = []
-
-async def broadcast(message: dict):
-    """Appelé par publisher.py quand un run est terminé."""
-    dead = []
-    for ws in _connections:
-        try:
-            await ws.send_json(message)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        _connections.remove(ws)
-
-@router.websocket("/alerts")
-async def alerts_ws(websocket: WebSocket):
-    await websocket.accept()
-    _connections.append(websocket)
-    logger.info(f"WebSocket connecté — {len(_connections)} clients actifs")
-    try:
-        while True:
-            await asyncio.sleep(30)
-            await websocket.send_json({"type": "ping"})
-    except WebSocketDisconnect:
-        _connections.remove(websocket)
-        logger.info("WebSocket déconnecté")
+[environments.production]
+PORT = "8000"
 ```
 
-Dans `agents/publisher.py`, appeler `broadcast()` après publication :
+### `.dockerignore`
 
-```python
-from app.api.ws import broadcast
-await broadcast({
-    "type": "run_complete",
-    "run_id": state["run_id"],
-    "title": state["report_title"],
-    "summary": state["report_summary"],
-    "timestamp": datetime.utcnow().isoformat()
-})
+```
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.prod.example
+.git/
+.gitignore
+frontend/
+dataset/
+models/
+notebooks/
+*.md
+docker-compose*.yml
 ```
 
-Ajouter `ws.router` dans `app/main.py`.
+### `.gitignore` — ajouter
 
----
-
-## Types TypeScript (`frontend/lib/types.ts`)
-
-```typescript
-export interface Trial {
-  id: string;
-  nct_id: string;
-  title: string;
-  status: string;
-  phase: string;
-  sponsor: string;
-  conditions: string[];
-  interventions: Array<{ type: string; name: string }>;
-  primary_outcomes: Array<{ measure: string; timeFrame: string }>;
-  enrollment: number | null;
-  start_date: string | null;
-  completion_date: string | null;
-}
-
-export interface TrialSearchResult {
-  score: number;
-  nct_id: string;
-  title: string;
-  status: string;
-  phase: string;
-  sponsor: string;
-  conditions: string[];
-  enrollment: number | null;
-  start_date: string | null;
-  completion_date: string | null;
-}
-
-export interface AgentRun {
-  run_id: string;
-  started_at: string;
-  status:
-    | "planning"
-    | "researching"
-    | "analyzing"
-    | "writing"
-    | "publishing"
-    | "done"
-    | "failed";
-  report_title: string;
-  report_summary: string;
-  key_findings: Array<{
-    finding: string;
-    evidence: string;
-    importance: "high" | "medium" | "low";
-  }>;
-  duration_seconds?: number;
-  errors: string[];
-}
-
-export interface Figure {
-  id: string;
-  upload_id: string;
-  page_number: number;
-  figure_type:
-    | "kaplan_meier"
-    | "forest_plot"
-    | "bar_chart"
-    | "table"
-    | "scatter"
-    | "unknown";
-  raw_interpretation: string;
-  structured_data: Record<string, unknown>;
-  confidence_score: number;
-}
-
-export interface KpiData {
-  total_trials: number;
-  recruiting_trials: number;
-  total_papers: number;
-  total_reports: number;
-  last_run_at: string | null;
-  last_run_status: string | null;
-}
-
-export interface WsMessage {
-  type: "run_complete" | "ping";
-  run_id?: string;
-  title?: string;
-  summary?: string;
-  timestamp?: string;
-}
 ```
+# Production secrets
+.env.prod
 
-## API Client (`frontend/lib/api.ts`)
+# ML artifacts (Phase 5 optionnelle)
+dataset/*.jsonl
+models/syn-*/
 
-```typescript
-const BASE = "/api";
+# Python
+__pycache__/
+*.pyc
+.venv/
 
-async function get<T>(
-  path: string,
-  params?: Record<string, string>,
-): Promise<T> {
-  const url = new URL(BASE + path, window.location.origin);
-  if (params)
-    Object.entries(params).forEach(([k, v]) => v && url.searchParams.set(k, v));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
-  return res.json();
-}
-
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(BASE + path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
-  return res.json();
-}
-
-export const api = {
-  // Trials
-  searchTrials: (q: string, phase?: string, status?: string, limit = 20) =>
-    get<{ results: TrialSearchResult[] }>("/trials/search", {
-      q,
-      phase,
-      status,
-      limit: String(limit),
-    }),
-  getTrial: (nctId: string) => get<Trial>(`/trials/${nctId}`),
-  getTrialPapers: (nctId: string) =>
-    get<{ results: unknown[] }>(`/trials/${nctId}/papers`),
-
-  // Figures
-  getFigures: (uploadId: string) =>
-    get<{ figures: Figure[] }>(`/papers/${uploadId}/figures`),
-
-  // Agent runs
-  getRuns: () => get<{ runs: AgentRun[] }>("/agents/runs"),
-  getRun: (runId: string) => get<AgentRun>(`/agents/runs/${runId}`),
-  triggerRun: () => post<{ run_id: string; status: string }>("/agents/run"),
-
-  // Ingest
-  uploadPdf: (file: File, vision = false) => {
-    const form = new FormData();
-    form.append("file", file);
-    return fetch(`${BASE}/ingest/pdf${vision ? "/vision" : ""}`, {
-      method: "POST",
-      body: form,
-    }).then((r) => r.json());
-  },
-
-  // KPIs — à implémenter dans FastAPI
-  getKpis: () => get<KpiData>("/kpis"),
-};
+# Node
+frontend/node_modules/
+frontend/.next/
 ```
 
 ---
 
-## Endpoint KPI à ajouter dans FastAPI (`app/api/kpis.py`) — NOUVEAU
+## README.md — Portfolio
 
-```python
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from app.database import get_db
-from app.models.trial import ClinicalTrial
-from app.models.paper import PaperRecord
-import redis.asyncio as aioredis
-from app.config import settings
+Rédiger un README complet dans ce style :
 
-router = APIRouter(tags=["kpis"])
+```markdown
+# SYN — Clinical Trial & Pipeline Intelligence
 
-@router.get("/kpis")
-async def get_kpis(db: AsyncSession = Depends(get_db)):
-    total_trials = (await db.execute(select(func.count()).select_from(ClinicalTrial))).scalar()
-    recruiting = (await db.execute(
-        select(func.count()).select_from(ClinicalTrial).where(ClinicalTrial.status == "RECRUITING")
-    )).scalar()
-    total_papers = (await db.execute(select(func.count()).select_from(PaperRecord))).scalar()
+> Agent autonome de veille R&D pharma/biotech. Surveille les essais cliniques,
+> les publications scientifiques et les approbations réglementaires en continu,
+> et produit des rapports de veille compétitive rédigés comme un analyste senior.
 
-    # Dernière run depuis Redis
-    r = aioredis.from_url(settings.redis_url)
-    history_raw = await r.get("syn:runs:history")
-    await r.aclose()
-    last_run = None
-    last_run_status = None
-    if history_raw:
-        import json
-        history = json.loads(history_raw)
-        if history:
-            last_run = history[-1].get("date")
-            last_run_status = history[-1].get("status")
+## Ce que SYN fait
 
-    return {
-        "total_trials": total_trials,
-        "recruiting_trials": recruiting,
-        "total_papers": total_papers,
-        "total_reports": len(json.loads(history_raw)) if history_raw else 0,
-        "last_run_at": last_run,
-        "last_run_status": last_run_status,
-    }
+- **Ingestion multi-source** : ClinicalTrials.gov, PubMed, bioRxiv, EMA
+- **Vision AI** : extrait et interprète les courbes Kaplan-Meier, forest plots,
+  et tableaux de résultats depuis des PDFs scientifiques complexes
+- **Agents autonomes** : pipeline LangGraph — Planner décide seul des cibles,
+  Researcher collecte, Analyzer croise public + privé, Writer rédige, Publisher livre
+- **RAG sur documents privés** : indexe les documents confidentiels client
+  (brevets, pipeline R&D) et les croise avec les données publiques
+- **Dashboard temps réel** : Next.js 15 avec alertes WebSocket
+
+## Architecture
 ```
 
----
+Sources (ClinicalTrials / PubMed / bioRxiv / EMA / PDFs)
+↓ ingestion async + rate limiting + UUID5 déterministe
+PostgreSQL (métadonnées) + Qdrant (4 collections vectorielles)
+↓ LangGraph multi-agents (Planner → Researcher → Analyzer → Writer → Publisher)
+Notion (rapports) + Discord (alertes) + Dashboard Next.js 15
 
-## Pages Next.js — spécifications
+````
 
-### `app/page.tsx` — Dashboard home
+## Stack technique
 
-4 KpiCards en grid : Total Essais, En recrutement, Papers indexés, Rapports générés.
-Dernier run agent : titre + status + badge importance.
-Bouton "Lancer un run" → `POST /api/agents/run` → toast notification.
-AlertBanner si un message WebSocket `run_complete` arrive.
+| Couche | Technologie |
+|---|---|
+| Backend | FastAPI + SQLAlchemy async + asyncpg |
+| Vector DB | Qdrant — syn_trials, syn_papers, syn_ema, syn_figures |
+| Relational DB | PostgreSQL 16 |
+| Cache / State agents | Redis 7 |
+| Agents | LangGraph + Groq llama-3.3-70b |
+| Vision AI | Groq llama-3.2-90b-vision — figures PDF |
+| Embeddings | sentence-transformers all-MiniLM-L6-v2 |
+| Frontend | Next.js 15 + TypeScript + Tailwind + shadcn/ui |
+| Infra | Docker Compose |
 
-```tsx
-// Structure de la page
-export default function HomePage() {
-  return (
-    <main>
-      <AlertBanner /> {/* WebSocket alerts */}
-      <KpiGrid /> {/* 4 cards */}
-      <div className="grid grid-cols-2 gap-6">
-        <LastRunCard /> {/* Dernier rapport agent */}
-        <QuickActionsCard /> {/* Bouton run + upload */}
-      </div>
-      <RecentTrialsTable /> {/* 5 derniers essais ingérés */}
-    </main>
-  );
-}
+## Lancer le projet (dev)
+
+```bash
+# 1. Services (PostgreSQL + Qdrant + Redis)
+docker compose up -d
+
+# 2. Backend
+python -m venv .venv && .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+
+# 3. Frontend
+cd frontend && npm install && npm run dev
+````
+
+Swagger UI : http://localhost:8000/docs
+Dashboard : http://localhost:3000
+
+## Lancer le projet (production)
+
+```bash
+cp .env.prod.example .env.prod
+# Remplir les variables dans .env.prod
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-### `app/trials/page.tsx` — Recherche essais
+## Cas d'usage — Veille compétitive biotech
 
-SearchBar avec debounce 400ms → appel `/api/trials/search` à chaque frappe.
-Filtres : Phase (dropdown), Status (dropdown).
-Résultats : cards avec score de similarité, badge status coloré, badge phase.
-Click sur un essai → `/trials/[nct_id]`.
+SYN a été conçu pour des équipes R&D pharma/biotech qui ont besoin de :
 
-```tsx
-// Debounce search
-const [query, setQuery] = useState("");
-const debouncedQuery = useDebounce(query, 400);
+- Surveiller les essais concurrents en temps réel
+- Croiser les données publiques avec leurs documents R&D internes confidentiels
+- Recevoir des rapports de veille structurés sans intervention manuelle
 
-useEffect(() => {
-  if (debouncedQuery) {
-    api.searchTrials(debouncedQuery, phase, status).then(setResults);
-  }
-}, [debouncedQuery, phase, status]);
-```
+**Contactez-moi pour une démonstration ou une mission freelance** :
+[votre email] | [LinkedIn]
 
-### `app/trials/[nct_id]/page.tsx` — Détail essai
-
-**Next.js 15 — params async obligatoire :**
-
-```typescript
-export default async function TrialPage({
-  params,
-}: {
-  params: Promise<{ nct_id: string }>;
-}) {
-  const { nct_id } = await params;
-  // fetch trial data...
-}
-```
-
-3 onglets (Tabs shadcn) :
-
-- **Informations** : tous les champs du Trial (conditions, interventions, outcomes, dates, enrollment)
-- **Publications** : papers PubMed/bioRxiv associés depuis `/trials/{nct_id}/papers`
-- **Figures** : si des figures ont été extraites pour des papers liés, les afficher avec FigureGallery
-
-### `app/reports/page.tsx` — Liste rapports
-
-Table des runs agents : date, titre, status (badge coloré), nb findings, durée.
-Bouton "Nouveau rapport" → trigger run → polling statut toutes les 5s jusqu'à `done`.
-
-### `app/reports/[run_id]/page.tsx` — Rapport complet
-
-**Next.js 15 — params async obligatoire :**
-
-```typescript
-export default async function ReportPage({
-  params,
-}: {
-  params: Promise<{ run_id: string }>;
-}) {
-  const { run_id } = await params;
-  // fetch run data...
-}
-```
-
-Afficher `report_body` (Markdown) rendu avec `react-markdown` + `remark-gfm`.
-Section findings clés avec badges importance (rouge=high, orange=medium, gris=low).
-Bouton "Export PDF" → `window.print()` avec CSS print (le plus simple sans Puppeteer).
-
-```tsx
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-
-<ReactMarkdown remarkPlugins={[remarkGfm]}>{run.report_body}</ReactMarkdown>;
-```
-
-CSS print pour l'export :
-
-```css
-@media print {
-  nav,
-  button,
-  .no-print {
-    display: none;
-  }
-  body {
-    font-size: 12pt;
-  }
-}
-```
-
-### `app/ingest/page.tsx` — Upload PDF
-
-Drag & drop zone (ou input file).
-Toggle : "Extraction texte" vs "Vision AI (figures)".
-Progress bar simulée pendant l'upload (l'API prend 5-30s).
-Résultat : nb chunks créés (texte) ou nb figures trouvées (vision) avec leurs types.
-
-### `hooks/useWebSocket.ts`
-
-```typescript
-export function useWebSocket(onMessage: (msg: WsMessage) => void) {
-  useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8000/ws/alerts");
-    ws.onmessage = (e) => {
-      const msg: WsMessage = JSON.parse(e.data);
-      if (msg.type !== "ping") onMessage(msg);
-    };
-    ws.onerror = () => console.warn("WS error — alertes désactivées");
-    return () => ws.close();
-  }, []);
-}
-```
-
----
-
-## Design System
-
-Utiliser **exclusivement** Tailwind + shadcn/ui. Pas d'autre lib CSS.
-
-Palette couleurs SYN :
-
-```typescript
-// tailwind.config.ts — extend colors
-colors: {
-  syn: {
-    bg: '#0a0a0f',
-    surface: '#12121a',
-    border: '#1e1e2e',
-    accent: '#00b4d8',
-    success: '#22c55e',
-    warning: '#f59e0b',
-    danger: '#ef4444',
-    text: '#e2e8f0',
-    muted: '#64748b',
-  }
-}
-```
-
-Dark mode uniquement. Background `syn-bg`, cards `syn-surface`.
-Badge status :
-
-- RECRUITING → `bg-green-500/10 text-green-400`
-- COMPLETED → `bg-blue-500/10 text-blue-400`
-- ACTIVE_NOT_RECRUITING → `bg-yellow-500/10 text-yellow-400`
-- Autres → `bg-gray-500/10 text-gray-400`
-
----
-
-## `FigureGallery` component
-
-```tsx
-// components/FigureGallery.tsx
-interface Props {
-  figures: Figure[];
-}
-
-export function FigureGallery({ figures }: Props) {
-  return (
-    <div className="grid grid-cols-2 gap-4">
-      {figures.map((fig) => (
-        <div key={fig.id} className="border border-syn-border rounded-lg p-4">
-          <div className="flex items-center justify-between mb-2">
-            <Badge>{fig.figure_type.replace("_", " ")}</Badge>
-            <span className="text-xs text-syn-muted">
-              Confiance : {Math.round(fig.confidence_score * 100)}%
-            </span>
-          </div>
-          <p className="text-sm text-syn-muted">
-            {fig.raw_interpretation.slice(0, 300)}...
-          </p>
-          {/* Données structurées si KM */}
-          {fig.figure_type === "kaplan_meier" &&
-            fig.structured_data?.hazard_ratio && (
-              <div className="mt-2 text-xs font-mono bg-syn-bg p-2 rounded">
-                HR = {fig.structured_data.hazard_ratio as number}
-                {fig.structured_data.p_value &&
-                  ` | p = ${fig.structured_data.p_value}`}
-              </div>
-            )}
-        </div>
-      ))}
-    </div>
-  );
-}
-```
-
----
-
-## requirements.txt FastAPI — aucun ajout
-
-Tout est déjà installé. Juste ajouter `ws.py` et `kpis.py`.
-
-## package.json frontend — dépendances
-
-```json
-{
-  "dependencies": {
-    "next": "^15.0.0",
-    "react": "^19",
-    "react-dom": "^19",
-    "typescript": "^5",
-    "tailwindcss": "^3",
-    "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
-    "recharts": "^2.13.3",
-    "lucide-react": "^0.460.0"
-  }
-}
-```
-
-shadcn/ui est ajouté via `npx shadcn@latest add`.
+````
 
 ---
 
 ## Ordre d'exécution
 
-**Backend (modifier FastAPI en premier) :**
-
-1. `app/api/ws.py` — WebSocket endpoint
-2. `app/api/kpis.py` — KPI endpoint
-3. `app/main.py` — CORS + router ws + router kpis
-4. `agents/publisher.py` — appel broadcast() après publication
-
-**Frontend (ensuite) :** 5. Setup Next.js + shadcn (commandes ci-dessus) 6. `frontend/lib/types.ts` — tous les types 7. `frontend/lib/api.ts` — client API 8. `frontend/hooks/useWebSocket.ts` 9. `frontend/components/` — tous les composants (KpiCard, TrialCard, AgentRunCard, FigureGallery, AlertBanner, PdfUploader, ReportViewer) 10. `frontend/app/layout.tsx` — layout principal avec nav 11. `frontend/app/page.tsx` — home dashboard 12. `frontend/app/trials/page.tsx` 13. `frontend/app/trials/[nct_id]/page.tsx` 14. `frontend/app/reports/page.tsx` 15. `frontend/app/reports/[run_id]/page.tsx` 16. `frontend/app/ingest/page.tsx`
+1. `.dockerignore` — créer
+2. `Dockerfile` — FastAPI prod
+3. `frontend/Dockerfile` — Next.js standalone
+4. `frontend/next.config.ts` — ajouter `output: 'standalone'` + env API URL
+5. `app/config.py` — ajouter `allowed_origins`
+6. `app/main.py` — CORS depuis config
+7. `.env.prod.example` — toutes les variables documentées
+8. `docker-compose.prod.yml` — stack complète
+9. `railway.toml` — config Railway
+10. `.gitignore` — mettre à jour
+11. `README.md` — rédiger le portfolio complet
 
 ---
 
-## Validation Phase 4
+## Validation Phase 5
 
 ```powershell
-# 1. FastAPI toujours OK
+# 1. Build Docker local — test que tout compile
+docker compose -f docker-compose.prod.yml build
+# → Aucune erreur de build sur les 2 images (fastapi + frontend)
+
+# 2. Lancer la stack prod en local
+docker compose -f docker-compose.prod.yml up -d
+# Attendre 30s le temps que les services démarrent
+
+# 3. Vérifier FastAPI containerisé
 Invoke-RestMethod -Uri "http://localhost:8000/health"
+# → {"status": "ok", "service": "syn"}
+
 Invoke-RestMethod -Uri "http://localhost:8000/kpis"
+# → chiffres réels (DB vide au premier run, c'est normal)
 
-# 2. Lancer le frontend (Next.js 15 — Turbopack par défaut)
-cd F:\Work\syn\frontend
-npm run dev
-# → http://localhost:3000
-# Si un package est incompatible Turbopack : npx next dev (sans --turbo)
+# 4. Vérifier le dashboard
+Start-Process "http://localhost:3000"
+# → Dashboard SYN s'affiche dans le browser
 
-# 3. Tests manuels dans le browser :
-# - http://localhost:3000 → KPIs s'affichent (chiffres réels depuis PG)
-# - http://localhost:3000/trials → taper "pembrolizumab" → résultats sémantiques
-# - http://localhost:3000/reports → liste des runs agents
-# - http://localhost:3000/ingest → upload un PDF → voir les chunks ou figures
+# 5. Test ingestion end-to-end depuis la stack prod
+Invoke-RestMethod -Uri "http://localhost:8000/ingest/trials?query=pembrolizumab&max_results=20" -Method POST
+Invoke-RestMethod -Uri "http://localhost:8000/trials/search?q=checkpoint+inhibitor"
+# → résultats réels
 
-# 4. WebSocket test
-# Trigger un run depuis l'UI → vérifier que l'AlertBanner apparaît quand done
+# 6. Arrêt propre
+docker compose -f docker-compose.prod.yml down
+````
 
-# 5. Export PDF
-# Ouvrir un rapport → bouton Export → Ctrl+P → vérifier mise en page propre
-```
+## Déploiement Railway (instructions manuelles après)
+
+Railway ne se configure pas via Claude Code — c'est une action manuelle :
+
+1. Créer un compte Railway : https://railway.app
+2. `New Project` → `Deploy from GitHub repo` → sélectionner le repo SYN
+3. Railway détecte le `Dockerfile` automatiquement
+4. Ajouter les variables d'env depuis `.env.prod.example` dans le dashboard Railway
+5. Ajouter les services : `PostgreSQL` (plugin Railway), `Redis` (plugin Railway)
+6. Pour Qdrant : déployer depuis `qdrant/qdrant` image Docker sur Railway
+7. Une fois déployé : copier l'URL publique Railway dans `ALLOWED_ORIGINS`

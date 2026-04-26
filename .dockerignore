@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.prod.example
+.git/
+.gitignore
+frontend/
+dataset/
+models/
+notebooks/
+*.md
+docker-compose*.yml

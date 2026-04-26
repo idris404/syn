@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from app.config import settings
 from app.database import create_tables
 from app.services.qdrant_service import ensure_collections
 
@@ -30,7 +31,7 @@ app = FastAPI(title="SYN", description="Autonomous pharma/biotech R&D monitoring
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
