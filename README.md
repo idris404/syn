@@ -1,30 +1,30 @@
 # SYN - Clinical Trial & Pipeline Intelligence
 
-> Agent autonome de veille R&D pharma/biotech. Il surveille les essais cliniques,
-> les publications scientifiques et les approbations reglementaires en continu,
-> puis produit des rapports de veille competitive rediges comme un analyste senior.
+> Autonomous pharma/biotech R&D intelligence agent. It continuously monitors clinical trials,
+> scientific publications, and regulatory approvals,
+> then produces competitive intelligence reports written like a senior analyst.
 
-## Ce que SYN fait
+## What SYN Does
 
-- Ingestion multi-source: ClinicalTrials.gov, PubMed, bioRxiv, EMA
-- Vision AI: extraction et interpretation de courbes Kaplan-Meier, forest plots et tableaux depuis des PDF scientifiques
-- Agents autonomes: pipeline LangGraph (Planner -> Researcher -> Analyzer -> Writer -> Publisher)
-- RAG sur documents prives: indexation de documents confidentiels client (brevets, pipeline R&D) et croisement avec donnees publiques
-- Dashboard temps reel: Next.js 15 avec alertes WebSocket
+- Multi-source ingestion: ClinicalTrials.gov, PubMed, bioRxiv, EMA
+- Vision AI: extraction and interpretation of Kaplan-Meier curves, forest plots, and tables from scientific PDFs
+- Autonomous agents: LangGraph pipeline (Planner -> Researcher -> Analyzer -> Writer -> Publisher)
+- RAG on private documents: indexing confidential client documents (patents, R&D pipeline) and cross-referencing with public data
+- Real-time dashboard: Next.js 15 with WebSocket alerts
 
 ## Architecture
 
 ```text
 Sources (ClinicalTrials / PubMed / bioRxiv / EMA / PDFs)
-  -> ingestion async + rate limiting + UUID5 deterministe
-PostgreSQL (metadonnees) + Qdrant (4 collections vectorielles)
+  -> async ingestion + rate limiting + deterministic UUID5
+PostgreSQL (metadata) + Qdrant (4 vector collections)
   -> LangGraph multi-agents (Planner -> Researcher -> Analyzer -> Writer -> Publisher)
-Notion (rapports) + Discord (alertes) + Dashboard Next.js 15
+Notion (reports) + Discord (alerts) + Next.js 15 dashboard
 ```
 
-## Stack technique
+## Technical Stack
 
-| Couche | Technologie |
+| Layer | Technology |
 |---|---|
 | Backend | FastAPI + SQLAlchemy async + asyncpg |
 | Vector DB | Qdrant - syn_trials, syn_papers, syn_ema, syn_figures |
@@ -42,7 +42,7 @@ Notion (rapports) + Discord (alertes) + Dashboard Next.js 15
 - Search trials: `docs/screenshots/trials-search.png`
 - Generated report: `docs/screenshots/report-detail.png`
 
-## Lancer le projet (dev)
+## Run the Project (dev)
 
 ```bash
 # 1) Services (PostgreSQL + Qdrant + Redis)
@@ -64,55 +64,55 @@ npm run dev
 Swagger UI: http://localhost:8000/docs
 Dashboard: http://localhost:3000
 
-## Lancer le projet (production locale)
+## Run the Project (local production)
 
 ```bash
 cp .env.prod.example .env.prod
-# Renseigner les variables dans .env.prod
+# Fill in variables inside .env.prod
 
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 ```
 
-## Validation Phase 5
+## Phase 5 Validation
 
 ```powershell
-# 1. Build Docker local
+# 1. Local Docker build
 docker compose --env-file .env.prod -f docker-compose.prod.yml build
 
-# 2. Lancer la stack prod en local
+# 2. Start the local production stack
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 
-# 3. Verifier FastAPI containerise
+# 3. Verify containerized FastAPI
 Invoke-RestMethod -Uri "http://localhost:8000/health"
 Invoke-RestMethod -Uri "http://localhost:8000/kpis"
 
-# 4. Verifier le dashboard
+# 4. Verify the dashboard
 Start-Process "http://localhost:3000"
 
-# 5. Test ingestion end-to-end
+# 5. End-to-end ingestion test
 Invoke-RestMethod -Uri "http://localhost:8000/ingest/trials?query=pembrolizumab&max_results=20" -Method POST
 Invoke-RestMethod -Uri "http://localhost:8000/trials/search?q=checkpoint+inhibitor"
 
-# 6. Arret propre
+# 6. Clean shutdown
 docker compose --env-file .env.prod -f docker-compose.prod.yml down
 ```
 
-## Deploiement Railway
+## Railway Deployment
 
-1. Creer un compte Railway: https://railway.app
-2. New Project -> Deploy from GitHub repo -> selectionner le repo SYN
-3. Railway detecte automatiquement le `Dockerfile`
-4. Ajouter les variables d'environnement depuis `.env.prod.example`
-5. Ajouter les services PostgreSQL et Redis via plugins Railway
-6. Deployer Qdrant avec l'image `qdrant/qdrant`
-7. Mettre a jour `ALLOWED_ORIGINS` avec l'URL publique Railway
+1. Create a Railway account: https://railway.app
+2. New Project -> Deploy from GitHub repo -> select the SYN repository
+3. Railway automatically detects the `Dockerfile`
+4. Add environment variables from `.env.prod.example`
+5. Add PostgreSQL and Redis services via Railway plugins
+6. Deploy Qdrant using the `qdrant/qdrant` image
+7. Update `ALLOWED_ORIGINS` with the public Railway URL
 
-## Cas d'usage - Veille competitive biotech
+## Use Case - Biotech Competitive Intelligence
 
-SYN est concu pour des equipes R&D pharma/biotech qui ont besoin de:
+SYN is designed for pharma/biotech R&D teams that need to:
 
-- Surveiller les essais concurrents en temps reel
-- Croiser les donnees publiques avec leurs documents R&D internes confidentiels
-- Recevoir des rapports de veille structures sans intervention manuelle
+- Monitor competitor trials in real time
+- Cross-reference public data with confidential internal R&D documents
+- Receive structured intelligence reports without manual effort
 
-Contact demonstration / mission freelance: [votre email] | [LinkedIn]
+Contact for demo / freelance engagement: [your email] | [LinkedIn]
