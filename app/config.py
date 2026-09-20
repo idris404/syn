@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -8,12 +7,14 @@ class Settings(BaseSettings):
     qdrant_trials_collection: str = "syn_trials"
     qdrant_papers_collection: str = "syn_papers"
     redis_url: str = "redis://localhost:6379"
+    internal_api_url: str = "http://localhost:8000"
     ncbi_email: str
     ncbi_api_key: str = ""
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
-    allowed_origins: list[str] = ["http://localhost:3000"]
+    allowed_origins: str = "http://localhost:3000"
     environment: str = "development"
+    enable_scheduler: bool = False
     groq_api_key: str = ""
     qdrant_ema_collection: str = "syn_ema"
     notion_token: str = ""
@@ -26,13 +27,9 @@ class Settings(BaseSettings):
     vision_dpi: int = 150
     qdrant_figures_collection: str = "syn_figures"
 
-    @field_validator("allowed_origins", mode="before")
-    @classmethod
-    def parse_allowed_origins(cls, value):
-        if isinstance(value, str):
-            # Accept both JSON array and comma-separated origins.
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

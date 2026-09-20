@@ -95,6 +95,8 @@ class RAGQuery(BaseModel):
 
 class RAGSourceUsed(BaseModel):
     nct_id: str | None = None
+    external_id: str | None = None
+    url: str | None = None
     title: str | None = None
     score: float | None = None
     source: str | None = None

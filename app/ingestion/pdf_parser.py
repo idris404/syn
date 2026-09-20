@@ -1,6 +1,6 @@
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from loguru import logger
 
@@ -39,18 +39,17 @@ def _clean_text(text: str) -> str:
 
 
 def chunk_text(text: str, chunk_size: int = 400, overlap: int = 50) -> list[str]:
+    if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
+        raise ValueError("chunk_size must be positive and overlap smaller than chunk_size")
     words = text.split()
     chunks = []
     start = 0
     while start < len(words):
         end = min(start + chunk_size, len(words))
-        chunk = " ".join(words[start:end])
-        if end < len(words):
-            last_period = chunk.rfind(". ", len(chunk) - 300)
-            if last_period > 0:
-                chunk = chunk[: last_period + 1]
-        chunks.append(chunk)
-        start += chunk_size - overlap
+        chunks.append(" ".join(words[start:end]))
+        if end == len(words):
+            break
+        start = end - overlap
     return chunks
 
 
@@ -116,5 +115,5 @@ def doc_pages(file_bytes: bytes) -> list:
     return pages
 
 
-def chunk_id(filename: str, chunk_index: int) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pdf:{filename}:{chunk_index}"))
+def chunk_id(upload_id: str, chunk_index: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pdf:{upload_id}:{chunk_index}"))

@@ -15,8 +15,9 @@ async def lifespan(app: FastAPI):
     await create_tables()
     await ensure_collections()
 
-    from app.scheduler import init_scheduler
-    init_scheduler(app)
+    if settings.enable_scheduler:
+        from app.scheduler import init_scheduler
+        init_scheduler(app)
 
     logger.info("SYN ready.")
     yield
@@ -31,7 +32,7 @@ app = FastAPI(title="SYN", description="Autonomous pharma/biotech R&D monitoring
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -55,6 +56,17 @@ async def run_agent_pipeline(run_id: str | None = None, targets: list[dict] | No
         logger.info(f"[Scheduler] run complete: run_id={run_id}")
     except Exception as e:
         logger.error(f"[Scheduler] pipeline error: {e}")
+        failure_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            await failure_client.set(
+                f"syn:runs:{run_id}",
+                json.dumps({"run_id": run_id, "status": "failed", "errors": ["Pipeline failed; inspect backend logs"]}),
+                ex=60 * 60 * 24 * 30,
+            )
+            if await failure_client.get("syn:runs:active") == run_id:
+                await failure_client.delete("syn:runs:active")
+        finally:
+            await failure_client.aclose()
 
     return run_id
 

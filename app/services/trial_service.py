@@ -58,10 +58,11 @@ async def upsert_trial(session: AsyncSession, trial: TrialCreate) -> tuple[str, 
             index_elements=["nct_id"],
             set_={k: v for k, v in values.items() if k not in ("id", "nct_id")},
         )
+        .returning(text("xmax = 0"))
     )
     result = await session.execute(stmt)
+    was_inserted = bool(result.scalar_one())
     await session.commit()
-    was_inserted = result.rowcount == 1
 
     embedding_text = _build_embedding_text(trial)
     vector = _embed(embedding_text)

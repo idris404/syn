@@ -37,24 +37,29 @@ async def _mark_ingested(redis_client, query: str) -> None:
     await redis_client.set(key, datetime.now(timezone.utc).isoformat())
 
 
-async def _light_ingest(source: str, query: str) -> None:
-    """Fire-and-forget light ingestion (max 20 results)."""
+async def _light_ingest(source: str, query: str) -> bool:
+    """Ingest a small batch before querying its vector collection."""
     try:
         import httpx
         endpoint_map = {
-            "clinicaltrials": f"http://localhost:8000/ingest/trials?query={query}&max_results=20",
-            "pubmed": f"http://localhost:8000/ingest/pubmed?query={query}&max_results=20",
-            "biorxiv": f"http://localhost:8000/ingest/biorxiv?query={query}&days=30&max_results=20",
-            "ema": "http://localhost:8000/ingest/ema",
+            "clinicaltrials": ("trials", {"query": query, "max_results": 20}),
+            "pubmed": ("pubmed", {"query": query, "max_results": 20}),
+            "biorxiv": ("biorxiv", {"query": query, "days": 30, "max_results": 20}),
+            "ema": ("ema", {}),
         }
-        url = endpoint_map.get(source)
-        if not url:
-            return
+        if source not in endpoint_map:
+            return False
+        path, params = endpoint_map[source]
         async with httpx.AsyncClient(timeout=120.0) as client:
-            await client.post(url)
+            response = await client.post(f"{settings.internal_api_url.rstrip('/')}/ingest/{path}", params=params)
+            response.raise_for_status()
+            if response.json().get("errors"):
+                return False
         logger.info(f"[Researcher] light ingest done: source={source} query={query!r}")
+        return True
     except Exception as e:
         logger.warning(f"[Researcher] light ingest failed: {e}")
+        return False
 
 
 async def _search_target(target: dict) -> dict:
@@ -92,7 +97,10 @@ async def researcher_node(state: SynState) -> dict:
             hours = await _last_ingestion_hours(redis_client, query)
             if hours > _INGESTION_TTL_HOURS:
                 logger.info(f"[Researcher] triggering light ingest: {source}/{query!r}")
-                ingest_tasks.append(asyncio.create_task(_light_ingest(source, query)))
+                ingest_tasks.append((query, asyncio.create_task(_light_ingest(source, query))))
+
+        for query, task in ingest_tasks:
+            if await task:
                 await _mark_ingested(redis_client, query)
 
         # Semantic search in Qdrant for all targets in parallel

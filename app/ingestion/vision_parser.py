@@ -12,7 +12,6 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field
-from io import BytesIO
 
 import httpx
 import fitz  # PyMuPDF

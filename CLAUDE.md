@@ -1,3 +1,7 @@
+# Historical phase brief — superseded by README.md
+
+This file records earlier implementation instructions and aspirations. It is not a current verification of deployment, data volume, security, or feature completeness. See README.md for the audited project status and working commands.
+
 # SYN — Phase 5 : Production & Deploy
 
 ## État actuel du projet (Phases 0→4 complètes)

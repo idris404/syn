@@ -140,7 +140,7 @@ async def analyzer_node(state: SynState) -> dict:
         logger.info(
             f"[Analyzer] done in {time.monotonic()-t0:.1f}s — "
             f"{len(parsed.get('key_findings', []))} findings"
-            + (f" + visual data" if visual_ctx else "")
+            + (" + visual data" if visual_ctx else "")
         )
         return {
             "analysis": parsed.get("analysis", ""),

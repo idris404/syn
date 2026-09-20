@@ -25,7 +25,7 @@ Pour chaque cible, spécifie :
 - reason : pourquoi c'est pertinent maintenant (1 phrase)
 
 Réponds UNIQUEMENT en JSON valide :
-{"targets": [...], "reasoning": "..."}
+{{"targets": [...], "reasoning": "..."}}
 """
 
 _FALLBACK_TARGETS = [

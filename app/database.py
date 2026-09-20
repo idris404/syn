@@ -12,7 +12,7 @@ class Base(DeclarativeBase):
 
 
 async def create_tables() -> None:
-    from app.models import trial  # noqa: F401 — registers ORM models
+    from app.models import figure, paper, trial  # noqa: F401 — registers ORM models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

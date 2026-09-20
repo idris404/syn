@@ -18,6 +18,10 @@ _COLLECTION_MAP = {
 }
 
 
+class RetrievalUnavailable(Exception):
+    """All requested vector collections failed to respond."""
+
+
 async def retrieve(
     query: str,
     sources: list[str] | None = None,
@@ -32,6 +36,7 @@ async def retrieve(
         collections = [(s, _COLLECTION_MAP[s]) for s in sources if s in _COLLECTION_MAP]
 
     all_hits: list[dict] = []
+    successful_collections = 0
 
     for source_name, collection in collections:
         try:
@@ -40,11 +45,15 @@ async def retrieve(
                 limit=limit,
                 collection=collection,
             )
+            successful_collections += 1
             for hit in hits:
                 hit["_source_name"] = source_name
                 all_hits.append(hit)
         except Exception as e:
             logger.warning(f"RAG retrieve error for {source_name}: {e}")
+
+    if collections and successful_collections == 0:
+        raise RetrievalUnavailable("Vector search is unavailable")
 
     # Re-rank by score descending, return top limit
     all_hits.sort(key=lambda h: h.get("score") or 0, reverse=True)
@@ -59,6 +68,9 @@ async def generate(
     """Returns (answer_text, tokens_used)."""
     from groq import AsyncGroq
 
+    if not context:
+        return "Aucune source pertinente disponible dans l'index. Je ne peux pas répondre sur cette base.", None
+
     if not settings.groq_api_key:
         return (
             "GROQ_API_KEY non configuré. Ajoutez votre clé dans .env pour activer la génération LLM.",
@@ -66,8 +78,9 @@ async def generate(
         )
 
     context_text = "\n\n".join(
-        f"[Source {i+1} — score={hit.get('score', 'N/A'):.3f}]\n"
+        f"[Source {i+1} — score={hit.get('score') or 0:.3f}]\n"
         f"Titre: {hit.get('title', 'N/A')}\n"
+        f"Identifiant: {hit.get('nct_id') or hit.get('pmid') or hit.get('doi') or hit.get('product_number') or hit.get('upload_id') or 'inconnu'}\n"
         f"{hit.get('abstract', hit.get('text', ''))[:600]}"
         for i, hit in enumerate(context)
     )

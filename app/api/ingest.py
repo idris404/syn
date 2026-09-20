@@ -193,11 +193,14 @@ async def ingest_pdf(
     start = time.monotonic()
 
     if file.size and file.size > 50 * 1024 * 1024:
-        from fastapi import HTTPException
         raise HTTPException(status_code=413, detail="PDF too large (max 50MB)")
 
     upload_id = str(uuid_lib.uuid4())
-    file_bytes = await file.read()
+    file_bytes = await file.read(50 * 1024 * 1024 + 1)
+    if len(file_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="PDF too large (max 50MB)")
+    if not file_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Invalid PDF")
     filename = file.filename or "upload.pdf"
 
     chunks = pdf_parser.parse_pdf(file_bytes=file_bytes, filename=filename, upload_id=upload_id)
@@ -208,7 +211,7 @@ async def ingest_pdf(
 
     for chunk in chunks:
         try:
-            chunk_uuid = pdf_parser.chunk_id(filename, chunk.chunk_index)
+            chunk_uuid = pdf_parser.chunk_id(upload_id, chunk.chunk_index)
             vector = model.encode(chunk.text).tolist()
             await qdrant_service.upsert_paper(
                 paper_id=chunk_uuid,
@@ -256,12 +259,11 @@ async def ingest_pdf_vision(
     """
     from app.ingestion import vision_parser
     from app.models.figure import FigureRecord
-    from app.schemas.figure import FigureSummary, VisionIngestResponse
 
-    if not settings.anthropic_api_key and not settings.openai_api_key:
+    if not settings.groq_api_key and not settings.openai_api_key:
         raise HTTPException(
             status_code=422,
-            detail="Vision API not configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env",
+            detail="Vision API not configured. Set GROQ_API_KEY or OPENAI_API_KEY in .env",
         )
 
     if file.size and file.size > 50 * 1024 * 1024:
@@ -269,7 +271,11 @@ async def ingest_pdf_vision(
 
     start = time.monotonic()
     upload_id = str(uuid_lib.uuid4())
-    file_bytes = await file.read()
+    file_bytes = await file.read(50 * 1024 * 1024 + 1)
+    if len(file_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="PDF too large (max 50MB)")
+    if not file_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Invalid PDF")
     filename = file.filename or "upload.pdf"
 
     logger.info(f"[Vision] pipeline start: filename={filename} upload_id={upload_id}")
@@ -344,7 +350,13 @@ async def ingest_pdf_vision(
         logger.error(f"[Vision] DB commit error: {e}")
 
     duration = round(time.monotonic() - start, 2)
-    provider = settings.vision_provider if settings.anthropic_api_key or settings.openai_api_key else "none"
+    preferred_provider = settings.vision_provider.lower()
+    provider = preferred_provider
+    if not (
+        (provider == "groq" and settings.groq_api_key)
+        or (provider == "openai" and settings.openai_api_key)
+    ):
+        provider = "groq" if settings.groq_api_key else "openai"
     logger.info(
         f"[Vision] done: {filename} pages={len(all_pages)} "
         f"figures={len(interpretations)} duration={duration}s"
