@@ -28,9 +28,12 @@ async def alerts_ws(websocket: WebSocket) -> None:
     logger.info(f"WebSocket connected - {len(_connections)} active clients")
     try:
         while True:
-            await asyncio.sleep(30)
-            await websocket.send_json({"type": "ping"})
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
     except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
+    finally:
         if websocket in _connections:
             _connections.remove(websocket)
-        logger.info("WebSocket disconnected")

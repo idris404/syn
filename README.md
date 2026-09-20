@@ -50,6 +50,16 @@ npm run dev
 
 Open [the UI](http://localhost:3000) or [the API documentation](http://localhost:8000/docs). The API creates PostgreSQL tables and Qdrant collections at startup. `GET /health` checks the API process only. If PostgreSQL or Qdrant is unavailable, startup fails. Redis is needed for agent runs and KPIs.
 
+For a local, all-Docker run, copy `.env.prod.example` to `.env.prod`, replace the PostgreSQL and Redis passwords, and set `NCBI_EMAIL` to your own contact address before using PubMed. Then run:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+curl http://127.0.0.1:3000/api/kpis
+```
+
+This Compose file binds the UI and API to localhost. The API currently runs one worker because startup creates database tables; multi-worker startup needs a separate migration step. The backend image is large (about 10.4 GB in the local ARM build) because of its ML dependencies.
+
 ## Five-minute local demo
 
 With the services and both apps running, ingest a small public sample, then search it:
@@ -87,6 +97,7 @@ GitHub Actions runs these same checks without secrets. The CI is present in the 
 - Trial PostgreSQL and Qdrant writes are separate, so a Qdrant failure can leave an indexed trial missing until retry. Publication and EMA ingestion is vector-only; the PostgreSQL `paper_records` table and its KPI are not populated by those routes.
 - The search ranking is vector similarity, not evidence quality. RAG returns source identifiers where available, but generated prose has no enforced claim-by-claim citation check. PDF uploads are not isolated by user.
 - bioRxiv search applies a simple keyword filter to fetched recent records. Figure detection is heuristic and vision output may be wrong. WebSocket alerts work only inside one backend process.
+- EMA reads the [official medicines spreadsheet](https://www.ema.europa.eu/en/medicines/download-medicine-data); its endpoint caps each run at 100 records by default and accepts `max_results=1` for a small demonstration.
 - Agent publishing and external integrations are implemented but have not been verified against live accounts in this repository. The local tests cover selected logic and API responses, not a full end-to-end stack.
 - The API has no authentication, authorization, tenant separation, upload quota, or request rate limit. Public deployment and confidential data are out of scope until these are addressed and tested.
 

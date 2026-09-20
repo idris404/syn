@@ -83,3 +83,81 @@ def test_rag_returns_503_when_vector_store_is_unavailable(monkeypatch):
     client = TestClient(app)
     response = client.post("/rag/query", json={"question": "What happened?"})
     assert response.status_code == 503
+
+
+def test_pdf_search_exposes_a_chunk_identifier(monkeypatch):
+    from app.api import papers
+
+    class Model:
+        def encode(self, text):
+            return self
+
+        def tolist(self):
+            return [0.1]
+
+    async def search_papers(**kwargs):
+        return [
+            {
+                "source": "pdf",
+                "upload_id": "demo-upload",
+                "chunk_index": 2,
+                "title": "Synthetic PDF",
+                "score": 0.7,
+            }
+        ]
+
+    monkeypatch.setattr(papers, "get_embedding_model", lambda: Model())
+    monkeypatch.setattr(papers.qdrant_service, "search_papers", search_papers)
+    response = TestClient(app).get("/papers/search?q=synthetic")
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == "pdf:demo-upload:2"
+
+
+def test_websocket_connection_is_removed_on_disconnect():
+    from app.api.ws import _connections
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/alerts"):
+        assert len(_connections) == 1
+    assert _connections == []
+
+
+def test_ema_ingestion_respects_small_limit(monkeypatch):
+    from app.api import ingest
+
+    class Model:
+        def encode(self, text):
+            return self
+
+        def tolist(self):
+            return [0.1]
+
+    async def medicines():
+        for index in range(3):
+            yield {
+                "id": f"medicine-{index}",
+                "product_number": f"EMA-{index}",
+                "medicine_name": "Demo",
+                "active_substance": "demo",
+                "inn": "demo",
+                "atc_code": "",
+                "authorisation_status": "Authorised",
+                "category": "Human",
+                "orphan_medicine": "No",
+                "first_published": "",
+                "revision_date": "",
+                "url": "",
+            }
+
+    written = []
+
+    async def upsert_paper(**kwargs):
+        written.append(kwargs)
+
+    monkeypatch.setattr(ingest.ema, "fetch_medicines", medicines)
+    monkeypatch.setattr(ingest.trial_service, "get_embedding_model", lambda: Model())
+    monkeypatch.setattr(ingest.qdrant_service, "upsert_paper", upsert_paper)
+    response = TestClient(app).post("/ingest/ema?max_results=1")
+    assert response.status_code == 200
+    assert response.json()["total_fetched"] == 1
+    assert len(written) == 1

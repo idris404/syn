@@ -139,11 +139,13 @@ async def ingest_biorxiv(
 
 
 @router.post("/ema")
-async def ingest_ema() -> dict:
+async def ingest_ema(max_results: int = Query(100, ge=1, le=1000)) -> dict:
     start = time.monotonic()
     total_fetched = errors = 0
 
     async for medicine in ema.fetch_medicines():
+        if total_fetched >= max_results:
+            break
         total_fetched += 1
         try:
             embedding_text = (

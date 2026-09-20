@@ -1,7 +1,9 @@
 import json
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from app.config import settings
 
@@ -11,8 +13,15 @@ _HISTORY_KEY = "syn:runs:history"
 _ACTIVE_KEY = "syn:runs:active"
 
 
+class RunTarget(BaseModel):
+    query: str = Field(min_length=1, max_length=200)
+    source: Literal["clinicaltrials", "pubmed", "biorxiv", "ema"]
+    priority: Literal["high", "medium", "low"] = "medium"
+    reason: str = Field(default="Manual target", max_length=200)
+
+
 class RunRequest(BaseModel):
-    targets: list[dict] | None = None
+    targets: list[RunTarget] | None = Field(default=None, max_length=5)
 
 
 async def _get_redis():
@@ -36,7 +45,8 @@ async def start_run(body: RunRequest, background_tasks: BackgroundTasks) -> dict
     import uuid
     run_id = str(uuid.uuid4())
 
-    background_tasks.add_task(run_agent_pipeline, run_id=run_id, targets=body.targets)
+    targets = [target.model_dump() for target in body.targets] if body.targets else None
+    background_tasks.add_task(run_agent_pipeline, run_id=run_id, targets=targets)
 
     return {"run_id": run_id, "status": "started"}
 

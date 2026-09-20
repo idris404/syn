@@ -53,6 +53,14 @@ async def planner_node(state: SynState) -> dict:
     t0 = time.monotonic()
     logger.info(f"[Planner] start run_id={state['run_id']}")
 
+    if state.get("targets"):
+        return {
+            "targets": state["targets"],
+            "plan_reasoning": "Targets supplied for this run.",
+            "current_agent": "researcher",
+            "status": "researching",
+        }
+
     import redis.asyncio as aioredis
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
 

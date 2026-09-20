@@ -17,6 +17,12 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   postgres:
@@ -58,13 +64,14 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        API_PROXY_TARGET: http://fastapi:8000
     container_name: syn-frontend
     ports:
       - "127.0.0.1:3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://fastapi:8000
     depends_on:
-      - fastapi
+      fastapi:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

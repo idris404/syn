@@ -19,14 +19,19 @@ async def search_papers(
 
     results = []
     for hit in hits:
+        external_id = hit.get("doi") or hit.get("pmid") or hit.get("product_number")
+        paper_id = external_id
+        if hit.get("source") == "pdf" and hit.get("upload_id"):
+            paper_id = f"pdf:{hit['upload_id']}:{hit.get('chunk_index', 0)}"
+            external_id = hit["upload_id"]
         results.append(
             PaperResponse(
-                id=hit.get("doi") or hit.get("pmid") or hit.get("product_number") or "",
+                id=paper_id or "",
                 source=hit.get("source", "unknown"),
                 title=hit.get("title"),
                 abstract=(hit.get("abstract") or "")[:300] or None,
                 score=hit.get("score"),
-                external_id=hit.get("doi") or hit.get("pmid") or hit.get("product_number"),
+                external_id=external_id,
                 date=hit.get("date") or hit.get("year"),
                 authors=hit.get("authors") or [],
                 url=hit.get("url"),

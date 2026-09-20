@@ -8,10 +8,18 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 EMA_XLSX_URL = (
-    "https://www.ema.europa.eu/sites/default/files/Medicines_output_european_public_assessment_reports.xlsx"
+    "https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx"
 )
 
 COLUMN_MAP = {
+    "Name of medicine": "medicine_name",
+    "EMA product number": "product_number",
+    "Medicine status": "authorisation_status",
+    "International non-proprietary name (INN) / common name": "inn",
+    "ATC code (human)": "atc_code",
+    "First published date": "first_published",
+    "Last updated date": "revision_date",
+    "Medicine URL": "url",
     "Medicine name": "medicine_name",
     "Active substance": "active_substance",
     "Product number": "product_number",
@@ -28,6 +36,22 @@ COLUMN_MAP = {
     "Exceptional circumstances": "exceptional_circumstances",
     "URL": "url",
 }
+
+
+def _as_text(value) -> str:
+    return "" if pd.isna(value) else str(value).strip()
+
+
+def _read_table(raw: bytes) -> pd.DataFrame:
+    preview = pd.read_excel(io.BytesIO(raw), header=None, nrows=20, engine="openpyxl")
+    header_rows = [
+        index
+        for index, row in preview.iterrows()
+        if "EMA product number" in row.values or "Product number" in row.values
+    ]
+    if not header_rows:
+        raise ValueError("EMA medicine table header not found")
+    return pd.read_excel(io.BytesIO(raw), header=header_rows[0], engine="openpyxl")
 
 
 def _uuid5_product(product_number: str) -> str:
@@ -47,26 +71,28 @@ async def fetch_medicines() -> AsyncGenerator[dict, None]:
     raw = await _download_xlsx()
     logger.info(f"Downloaded {len(raw):,} bytes — parsing...")
 
-    df = pd.read_excel(io.BytesIO(raw), engine="openpyxl")
+    df = _read_table(raw)
 
     # Rename known columns
     rename = {k: v for k, v in COLUMN_MAP.items() if k in df.columns}
     df = df.rename(columns=rename)
+    if "product_number" not in df or "authorisation_status" not in df:
+        raise ValueError("EMA medicine table is missing required columns")
 
     # Filter authorised only
     if "authorisation_status" in df.columns:
-        df = df[df["authorisation_status"].str.strip().str.lower() == "authorised"]
+        df = df[df["authorisation_status"].astype(str).str.strip().str.lower() == "authorised"]
 
     df = df.where(pd.notna(df), None)
 
     for _, row in df.iterrows():
-        product_number = str(row.get("product_number") or "").strip()
+        product_number = _as_text(row.get("product_number"))
         if not product_number:
             continue
 
-        medicine_name = str(row.get("medicine_name") or "").strip()
-        active_substance = str(row.get("active_substance") or "").strip()
-        inn = str(row.get("inn") or "").strip()
+        medicine_name = _as_text(row.get("medicine_name"))
+        active_substance = _as_text(row.get("active_substance"))
+        inn = _as_text(row.get("inn"))
 
         record = {
             "id": _uuid5_product(product_number),
@@ -74,17 +100,17 @@ async def fetch_medicines() -> AsyncGenerator[dict, None]:
             "medicine_name": medicine_name,
             "active_substance": active_substance,
             "inn": inn,
-            "patient_safety": row.get("patient_safety"),
+            "patient_safety": _as_text(row.get("patient_safety")),
             "authorisation_status": row.get("authorisation_status"),
-            "atc_code": row.get("atc_code"),
-            "first_published": str(row.get("first_published") or ""),
-            "revision_date": str(row.get("revision_date") or ""),
-            "category": row.get("category"),
-            "generic": row.get("generic"),
-            "biosimilar": row.get("biosimilar"),
-            "orphan_medicine": row.get("orphan_medicine"),
-            "exceptional_circumstances": row.get("exceptional_circumstances"),
-            "url": row.get("url"),
+            "atc_code": _as_text(row.get("atc_code")),
+            "first_published": _as_text(row.get("first_published")),
+            "revision_date": _as_text(row.get("revision_date")),
+            "category": _as_text(row.get("category")),
+            "generic": _as_text(row.get("generic")),
+            "biosimilar": _as_text(row.get("biosimilar")),
+            "orphan_medicine": _as_text(row.get("orphan_medicine")),
+            "exceptional_circumstances": _as_text(row.get("exceptional_circumstances")),
+            "url": _as_text(row.get("url")),
         }
         yield record
 

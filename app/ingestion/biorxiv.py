@@ -82,7 +82,7 @@ async def fetch_papers(
                 fetched += 1
                 yield article
 
-            total = data.get("messages", [{}])[0].get("total", 0)
+            total = int(data.get("messages", [{}])[0].get("total") or 0)
             cursor += PAGE_SIZE
             if cursor >= total or cursor >= max_results * 3:
                 break
